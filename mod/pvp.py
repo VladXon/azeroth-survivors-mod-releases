@@ -34,12 +34,17 @@ HERE = Path(__file__).resolve().parent
 GAME_EXE = os.environ.get("AZS_GAME_EXE") or "AzerothSurvivors-52.exe"  # override: test copies of the exe
 GAME_EXES = {"azerothsurvivors.exe", GAME_EXE.lower()}
 DEFAULT_PRESET = {"density": 125, "health": 125, "damage": 100, "speed": 100}
-GHOST_HZ = 20
+GHOST_HZ = 20  # the internet server's rate; a match may name its own (`hz`: a LAN hub, lan_server.py)
 GHOST_FRAME_GAP_S = 1 / GHOST_HZ
+SEND_SLACK = 0.8  # relay 4: a frame may leave this share of the step after the last (the loop's timing jitters)
+RELAY3_HZ = 18  # relay 3 drops frames under 50 ms apart: 55 ms steps leave room for the loop's and the network's jitter
+# (20 Hz steps against a 50 ms send gap skipped every other frame: 10-13 frames a second went out)
+UNSENT_EV_MAX = 256  # hits held for the next frame sent (a skipped send no longer loses them)
 GHOST_CONNECT_GRACE_S = 15  # allow the partner to launch/join before probing a quiet socket
 FRAME_MAX = 8000  # bytes; the relay (server/) refuses frames over 8192 (relay 3; 4096 before)
 GHOST_STALE_S = 3  # the ghost hides when the partner sent nothing for this long
-PLAYOUT_S = 0.2  # the partner is shown this far behind its newest frame: frames late by up to this still move it smoothly
+PLAYOUT_S = 0.2  # the partner is shown at most this far behind its newest frame (the jitter buffer's ceiling)
+PLAYOUT_MIN_S = 0.05  # ...and at least this far: on a LAN two sample intervals and the jitter are less
 OFFSET_CREEP = 0.002  # s per partner sample (~20 ms a second): how fast the jitter buffer follows a slower network
 DEAD_SHOW_S = 4  # a dead partner stays visible (flag dead) this long, then the ghost hides
 IN_RUN = ("playing", "choosing", "paused")
@@ -61,7 +66,8 @@ CONFIG = Path(os.environ["APPDATA"]) / "wenilla-rogue" / "pvp.json"
 LOG_FILE = CONFIG.parent / "pvp-log.txt"  # what the companion saw and did, for bug reports
 log = logging.getLogger("pvp")
 SERVER_FILE = HERE / "pvp_server.txt"  # the deployed worker's URL
-SERVER = os.environ.get("AZS_PVP_SERVER") or (SERVER_FILE.read_text().strip() if SERVER_FILE.exists() else "")
+OFFICIAL = SERVER_FILE.read_text().strip() if SERVER_FILE.exists() else ""
+SERVER = os.environ.get("AZS_PVP_SERVER") or OFFICIAL  # another one: a LAN hub (lan_server.py) or a test server
 # Cloudflare blocks the default Python-urllib user agent (error 1010)
 USER_AGENT = "AzerothSurvivorsMod/1.0"
 POLL_S = 2.5
@@ -1041,9 +1047,9 @@ def relay_phase(run_state):
     return {0: "ready", 1: "playing", 2: "choosing", 3: "paused", 4: "dead", 5: "victory"}.get(run_state[1])
 
 
-def relay_send_due(now, last_sent_at):
-    """Respect the server's 50 ms frame gap; a phase edge waits for this legal slot."""
-    return last_sent_at is None or now - last_sent_at >= GHOST_FRAME_GAP_S
+def relay_send_due(now, last_sent_at, gap=GHOST_FRAME_GAP_S):
+    """At most one frame per gap (shorter than the step, see GhostLink.send_gap); a phase edge waits for this slot."""
+    return last_sent_at is None or now - last_sent_at >= gap
 
 
 def socket_stale(now, connected_at, partner_at):
@@ -1058,12 +1064,19 @@ class GhostLink:
     every few seconds) and writes the partner into the game's ghost block. Reconnects on any error."""
     STATIC_EVERY_S = 5
 
-    def __init__(self, match_id, token, ghost=None, feed=None, hits=None, host=True, shared=None):
+    def __init__(self, match_id, token, ghost=None, feed=None, hits=None, host=True, shared=None, hz=GHOST_HZ,
+                 relay=3):
         """hits: my exe's hits block reader, None when the exe or the server (match `relay` < 2) can't
         take part in the full sync: then only the old 512-byte frames go out. host: I invited, so my
         run clock leads and my partner's run starts with mine. shared: the shared enemies (a SharedSync,
-        exe and relay 3 permitting; they go live once the partner's frames show it takes part)."""
+        exe and relay 3 permitting; they go live once the partner's frames show it takes part). hz: frames
+        a second, the match's (a LAN hub streams faster than the internet server). relay: the match's relay
+        version (4 takes bursts, so a send may come a little early)."""
         self.match_id = match_id
+        self.hz = max(10, min(60, hz)) if isinstance(hz, (int, float)) else GHOST_HZ
+        bursts = isinstance(relay, int) and relay >= 4
+        self.hz = self.hz if bursts else min(self.hz, RELAY3_HZ)
+        self.send_gap = SEND_SLACK / self.hz if bursts else GHOST_FRAME_GAP_S  # below the step: every step sends
         self.host = host
         self.host_started = False  # guest: the host's run is going, so mine starts too
         self.host_gone = False  # guest: the host's run is over before mine began: my start is mine again
@@ -1085,6 +1098,8 @@ class GhostLink:
         self.partner_at = 0.0
         self.trail = deque(maxlen=30)  # the partner's position samples: (sender time, arrival, frame)
         self.offset = None  # arrival minus sender time of the least delayed sample, creeping up slowly
+        self.interval = 1 / self.hz  # the partner's mean sample interval (s, sender clock)
+        self.jitter = PLAYOUT_S / 3  # mean lateness of a sample against the least delayed one (s)
         self.run_seq, self.run_seen = None, 0.0  # my AZSRUN sample and when I first saw it
         self.visible = False
         self.dead_since = None  # when the partner's phase became dead
@@ -1096,6 +1111,7 @@ class GhostLink:
         self.choice_peer = ChoicePeerTracker()
         self.choice_state_cache = None
         self.events = []  # the partner's hits waiting for the ghost's ring
+        self.unsent_ev = []  # my hits read from the exe and not yet in a frame sent
         self.partner_picks = None  # the partner's last pick counts
         self.grants = [0, 0]  # chest and guardian picks the partner gave me so far, for the ghost block
         self.bosses = None  # the partner's bosses [(key, health fraction)], None when it doesn't stream them
@@ -1153,7 +1169,7 @@ class GhostLink:
             self.events = []
             if self.offline and not self.defeat:
                 break  # session over and nothing left to finish
-            next_at = max(next_at + 1 / GHOST_HZ, time.monotonic())
+            next_at = max(next_at + 1 / self.hz, time.monotonic())
             self.stop.wait(next_at - time.monotonic())
         log.info("relay %s: stop", self.match_id)
         self.drop()
@@ -1257,7 +1273,8 @@ class GhostLink:
             frame["t"] = round(clock[0], 3)
         mine = self.hits.read() if self.hits and game else None
         if mine:  # a v3 exe: the real hits instead of the partner's dps estimate
-            frame["ev"], frame["rw"] = cap_events(mine[0]), mine[1]
+            self.unsent_ev = (self.unsent_ev + mine[0])[-UNSENT_EV_MAX:]
+            frame["ev"], frame["rw"] = cap_events(self.unsent_ev), mine[1]
             if mine[2] is not None:
                 frame["bh"] = [list(b) for b in mine[2]]
         if self.shared:
@@ -1268,9 +1285,10 @@ class GhostLink:
             frame["ev"] = cap_events(frame["ev"], len(frame["ev"]) // 2)
             text = json.dumps(frame, separators=(",", ":"))
         now = time.monotonic()
-        if relay_send_due(now, self.last_sent_at):
+        if relay_send_due(now, self.last_sent_at, self.send_gap):
             self.ws.send(text)
             self.last_sent_at = now
+            self.unsent_ev = []
             self.send_static()
         while True:  # drain everything the partner sent since the last step
             try:
@@ -1387,16 +1405,25 @@ class GhostLink:
         if self.trail and key <= self.trail[-1][0]:
             self.trail[-1] = (self.trail[-1][0], self.trail[-1][1], message)
             return
+        if self.trail and key - self.trail[-1][0] < 1:
+            self.interval += (key - self.trail[-1][0] - self.interval) / 16
         self.trail.append((key, now, message))
         # drops at once to a faster sample, rises 20 ms a second: the shown time never jumps back
         self.offset = now - key if self.offset is None else min(now - key, self.offset + OFFSET_CREEP)
+        self.jitter += (now - key - self.offset - self.jitter) / 16
+
+    def playout_delay(self):
+        """How far behind its newest sample the partner is shown: two sample intervals (one lost or late
+        frame still finds a next one to slide to) and three times the mean lateness, within
+        PLAYOUT_MIN_S..PLAYOUT_S. On a LAN about 0.07 s, over the internet up to 0.2 s."""
+        return min(PLAYOUT_S, max(PLAYOUT_MIN_S, 2 * self.interval + 3 * self.jitter))
 
     def playout(self):
         """The partner PLAYOUT_S behind its newest sample, the position interpolated between samples on
         the sender's clock, so the exe gets steady steps whatever the network does."""
         if not self.trail:
             return self.partner
-        t = time.monotonic() - self.offset - PLAYOUT_S
+        t = time.monotonic() - self.offset - self.playout_delay()
         samples = list(self.trail)
         for (t0, _, a), (t1, _, b) in zip(samples, samples[1:]):
             if t0 <= t < t1:
@@ -1435,6 +1462,7 @@ class GhostLink:
         # preserve capability negotiation so the next connection need not renegotiate.
         self.partner = None
         self.partner_at = 0.0
+        self.unsent_ev = []  # hits from before a reconnect are stale for the partner
         self.choice_peer = ChoicePeerTracker()
         if self.shared and self.shared.host:
             self.shared.choice = {"host_shield": False, "guest_shield": False, "both": False}
@@ -1650,8 +1678,20 @@ class Session:
         self.zones_at = 0.0
         self.logged = {}  # the last match summary / error / wait reason written to the log
 
+    def account(self):
+        """Nick and token on this server: pvp.json's own for the official one, its `servers` entry for
+        another (a LAN hub knows other players than the internet server)."""
+        return self.cfg if SERVER == OFFICIAL else self.cfg.get("servers", {}).get(SERVER, {})
+
+    def nick(self):
+        return str(self.account().get("nick", ""))
+
+    def set_account(self, nick, token):
+        self.update_config(lambda cfg: (cfg if SERVER == OFFICIAL else cfg.setdefault("servers", {}).setdefault(
+            SERVER, {})).update(nick=nick, token=token))
+
     def token(self):
-        token = self.cfg.get("token")
+        token = self.account().get("token")
         return token if token != self.rejected_token else None
 
     def update_config(self, change):
@@ -1775,10 +1815,11 @@ class Session:
             self.stop_link()  # two writers must never overlap on the ghost buffer
             feed = self.new_feed()
             hits = self.new_hits(feed) if match.get("relay", 1) >= 2 else None
-            host = match["players"][0]["nick"].lower() == str(self.cfg.get("nick", "")).lower()
+            host = match["players"][0]["nick"].lower() == self.nick().lower()
             ghost = self.new_ghost()
             shared = self.new_shared(ghost, host) if hits and match.get("relay", 1) >= 3 else None
-            self.link = GhostLink(match["id"], self.token(), ghost, feed, hits, host, shared).start()
+            self.link = GhostLink(match["id"], self.token(), ghost, feed, hits, host, shared,
+                                  match.get("hz", GHOST_HZ), match.get("relay", 1)).start()
         elif not coop and self.link:
             if self.link.partner_dead and not self.link.defeat_done and not self.link.defeat_manual:
                 # the session is over but our run must still end in defeat: let the link finish that
@@ -1789,7 +1830,7 @@ class Session:
 
     def partner_died(self, match):
         """The partner's own death (not ours caused by theirs, not a partner who left)."""
-        nick = str(self.cfg.get("nick", "")).lower()
+        nick = self.nick().lower()
         return any(p["nick"].lower() != nick and p["status"] == "died" and p.get("reason") != "partner"
                    for p in match["players"])
 
@@ -1838,10 +1879,15 @@ class Session:
             if match and match["id"] != match_id and match["state"] in ("starting", "running", "finished"):
                 pass  # one match at a time: a newer match means ours is over, no need to ask the server
             else:
-                ours = match if match and match["id"] == match_id else api("GET", f"/api/matches/{match_id}")
+                try:
+                    ours = match if match and match["id"] == match_id else api("GET", f"/api/matches/{match_id}")
+                except ApiError as e:
+                    if e.status != 404:
+                        raise
+                    ours = None  # played on another server (internet / LAN hub, which forgets matches): the closed game ended it
                 # my run is what the profile holds: once it's over (left, died, timed out) and the
                 # game is closed, merge without waiting for the partner
-                if ours["state"] != "finished" and self.side_of(ours).get("status") not in RUN_OVER:
+                if ours and ours["state"] != "finished" and self.side_of(ours).get("status") not in RUN_OVER:
                     return
             # recorded first: a crash right after the dump loses one match's progress, never doubles it
             self.update_config(lambda cfg: cfg.setdefault("merged", []).append(match_id))
@@ -1862,7 +1908,7 @@ class Session:
 
     def side_of(self, match):
         """My player entry by the configured nick ({} if absent); works before /api/me answered."""
-        nick = str(self.cfg.get("nick", "")).lower()
+        nick = self.nick().lower()
         return next((p for p in match["players"] if p["nick"].lower() == nick), {})
 
     def report(self, match, game):
@@ -2083,7 +2129,7 @@ class Window:
 
         def register(nick):
             r = api("POST", "/api/players", {"nick": nick})
-            self.s.update_config(lambda cfg: cfg.update(nick=r["nick"], token=r["token"]))
+            self.s.set_account(r["nick"], r["token"])
         self.button(row, "Зарегистрироваться", lambda: self.background(register, entry.get().strip()))
         self.show_error()
 
@@ -2364,7 +2410,7 @@ class Online:
 
     def do_register(self, nick):
         r = api("POST", "/api/players", {"nick": nick.strip()})
-        self.s.update_config(lambda cfg: cfg.update(nick=r["nick"], token=r["token"]))
+        self.s.set_account(r["nick"], r["token"])
 
     def do_invite(self, nick):
         check_ready_for_pvp()
@@ -2447,7 +2493,7 @@ class Online:
             names = [ZONE_NAMES.get(z, z) for z in save.ZONES]
             target = self.coop_target
             both = min((target or {}).get("zones") or 1, s.zones or 1, len(names))
-            out.update(view="lobby", nick=(me or {}).get("nick", s.cfg.get("nick")), rating=(me or {}).get("rating"),
+            out.update(view="lobby", nick=(me or {}).get("nick", s.nick()), rating=(me or {}).get("rating"),
                        feed=bool(s.feed), target=target, zones=names, zone=both - 1,
                        suggestions={"q": q, "players": [p for p in found if not target or p["nick"] != target.get("nick")]})
             return out
@@ -2524,7 +2570,7 @@ class Online:
             if free:
                 button("to_lobby", "В лобби")
                 button("back_to_main", "Вернуться в обычную игру")
-        out["page"] = self.page_url(m["id"])
+        out["page"] = None if m.get("lan") else self.page_url(m["id"])
         if (s.game is None and m["state"] in ("starting", "running") and not free
                 and s.cfg.get("profile_match") == m["id"]):
             line("Игра не запущена", "err")

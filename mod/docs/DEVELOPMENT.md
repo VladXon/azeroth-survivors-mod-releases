@@ -110,6 +110,8 @@ python tools/dump_offsets.py ..\AzerothSurvivors.exe --output ..\offsets-diagnos
 python tools/test_offsets.py
 python tools/test_coop_sync.py
 python tools/test_coop_network.py
+python tools/test_lan_server.py
+python tools/test_launcher_network.py
 python tools/test_choice_shield.py
 python tools/test_choice_integration.py
 python -m unittest tools.test_coop_choice_cast -v

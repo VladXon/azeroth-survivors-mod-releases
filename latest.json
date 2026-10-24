@@ -1,8 +1,8 @@
 {
   "format": 1,
-  "version": "2026.10.24.1-0c64e07",
-  "tag": "v2026.10.24.1-0c64e07",
-  "source_commit": "0c64e07307cfce75c2b0e5a830d281dc15f7e5d3",
+  "version": "2026.10.24.2-a5f3e25",
+  "tag": "v2026.10.24.2-a5f3e25",
+  "source_commit": "a5f3e250afcf59db9afdf94cc6863b3657cadf33",
   "server_migrations": [
     "https://azeroth-pvp.ync-erver.workers.dev"
   ],
@@ -15,8 +15,8 @@
   },
   "launcher": {
     "asset": "Azeroth.Launcher.exe",
-    "size": 25630297,
-    "sha256": "2c806da4bfd8fe0299637b399944a948dbc533906431f60cf9686c818feee8e2"
+    "size": 25671124,
+    "sha256": "6c320a74314b431c5b96d20b950f247ba72d3f37a4fdda3ddf4ecad6dc64633d"
   },
   "mod": {
     "files": [
@@ -42,8 +42,13 @@
       },
       {
         "path": "docs/DEVELOPMENT.md",
-        "size": 19777,
-        "sha256": "cd1afeda6df4ae39fb1af1f64b5c4a73d7596389334604827e5655fc08c3ac94"
+        "size": 19847,
+        "sha256": "92d1ca15a79ff513e1cba2b9e1095e51364cf467dce433f76ce8fb6820a2d01f"
+      },
+      {
+        "path": "lan_server.py",
+        "size": 34231,
+        "sha256": "7d665413b156499957658714efe76e119605e2c3bb5ba56a4f7d5233a2dc4954"
       },
       {
         "path": "lang/en.json",
@@ -147,8 +152,8 @@
       },
       {
         "path": "pvp.py",
-        "size": 130717,
-        "sha256": "ca68e5ab32372a88cb50c32011dc52fee906acd9268e6ba12da214df74929263"
+        "size": 133925,
+        "sha256": "ae54711ef957b4e8d13d9d311d7d09ff0c5027fb985ab6c689a08485b1a1cbdd"
       },
       {
         "path": "pvp_server.txt",
@@ -157,13 +162,13 @@
       },
       {
         "path": "README.md",
-        "size": 22402,
-        "sha256": "0b7fa50897a53b4ae6cd0756f23c8928210b1ca6ed37e662cf9510917e6f8e1b"
+        "size": 24494,
+        "sha256": "a75aefe6094ee35b95e1ab9f6efc47a9c7f048095431b0c8bd4346bf18ae01a2"
       },
       {
         "path": "RELEASE.json",
         "size": 676,
-        "sha256": "8986924e4d437895d6a23b21944e65dc4792437e65051aa152eefb1360333f83"
+        "sha256": "cbd790ece6b22444906d5aff4533a11147a165d329af17cfed3941624de49173"
       },
       {
         "path": "requirements.txt",
@@ -178,7 +183,7 @@
       {
         "path": "VERSION",
         "size": 20,
-        "sha256": "701ab118aea2c0a548d67b9655a169cab85eff6b642e0ac08a35b03674ac015f"
+        "sha256": "4f5afdbeb5d5c0956b61ad5cb9081af0cb7581053d2a5568084bd13d01af3dc3"
       }
     ]
   }
