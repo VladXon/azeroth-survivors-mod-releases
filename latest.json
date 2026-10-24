@@ -1,0 +1,185 @@
+{
+  "format": 1,
+  "version": "2026.10.24.1-0c64e07",
+  "tag": "v2026.10.24.1-0c64e07",
+  "source_commit": "0c64e07307cfce75c2b0e5a830d281dc15f7e5d3",
+  "server_migrations": [
+    "https://azeroth-pvp.ync-erver.workers.dev"
+  ],
+  "game": {
+    "tested_sha256": [
+      "dc10453398ceb398076f6d3b6ac7859470de2ff7ccd68ac1d00a02f9f1e5209a"
+    ],
+    "official_page": "https://wow.aethus.pl/",
+    "official_archive": "https://wow.aethus.pl/download/AzerothSurvivorsWindowsNew.rar"
+  },
+  "launcher": {
+    "asset": "Azeroth.Launcher.exe",
+    "size": 25630297,
+    "sha256": "2c806da4bfd8fe0299637b399944a948dbc533906431f60cf9686c818feee8e2"
+  },
+  "mod": {
+    "files": [
+      {
+        "path": "apply_update.ps1",
+        "size": 6021,
+        "sha256": "aae39ecad286cfb37c9e98990995b50a704493e7d1247a54038c1ee6fbd05852"
+      },
+      {
+        "path": "auto_update.py",
+        "size": 10212,
+        "sha256": "732a465bfe9a678a18438ee69a80d56392aced6d30ade5c0b3c6327ea1b40b5b"
+      },
+      {
+        "path": "bans.py",
+        "size": 4591,
+        "sha256": "da2df49ee971d684d4a90f1d6198e221987309406da0b81a4dcfb73211dc2d02"
+      },
+      {
+        "path": "choice_shield.py",
+        "size": 7487,
+        "sha256": "990a1d5f0ebec79c61097733811e46f7802f7a58b99ef83dce8a960df853e896"
+      },
+      {
+        "path": "docs/DEVELOPMENT.md",
+        "size": 20034,
+        "sha256": "0ff1324e66af909915bf0cf83246ba74e1eb9ad4a52e6565b0bf1da27396cca2"
+      },
+      {
+        "path": "lang/en.json",
+        "size": 734,
+        "sha256": "1e907d6e5537f1a7c72a70cf7c7c1a3b5a4a19a99f403424060972f08bb073e1"
+      },
+      {
+        "path": "lang/ru.json",
+        "size": 17167,
+        "sha256": "ccd464979893e7a8fd8fdeb228f0371dd3384066456ae6e4cd037b78463568fc"
+      },
+      {
+        "path": "launcher.pyw",
+        "size": 5656,
+        "sha256": "c755c98b912cc5eb75f42a5eda28f862376b785f5881ad7c8115a455f02d71c2"
+      },
+      {
+        "path": "offsets.py",
+        "size": 21205,
+        "sha256": "5d7e3066533b04b42a47ce66ec7edc30a30a8d1448ccfca49b6678f0f5b7ba50"
+      },
+      {
+        "path": "patch_azeroth.py",
+        "size": 17893,
+        "sha256": "8ca28db9f4362208e54aaa5c06ab7d0d217b32044ab7241e91fa0ddc4579f49c"
+      },
+      {
+        "path": "patches/coop_choice.py",
+        "size": 19317,
+        "sha256": "657eda816c4bc22fed8405be9314e43c6b68c6915c52f8c54a3bf568f8a1e327"
+      },
+      {
+        "path": "patches/coop_choice_cast.py",
+        "size": 7291,
+        "sha256": "f8a4decd023bece3bd58eff7f1e82eaf81ae19645ec40fa6b20788e6f9fe2d1f"
+      },
+      {
+        "path": "patches/coop_choice_push.py",
+        "size": 12034,
+        "sha256": "5954abce3e812fa7774d885bdeec7d009af7f9995e15a360d7ae526477005606"
+      },
+      {
+        "path": "patches/coop_ghost.py",
+        "size": 126189,
+        "sha256": "090db3ace9b913c433f7815393a7baabc6a88dcb9810846384a99ad36387bacb"
+      },
+      {
+        "path": "patches/coop_shared.py",
+        "size": 33972,
+        "sha256": "d389b59ac89be14091b14c0a9916962a576aeb783b5360fb2ed91c8c94086a88"
+      },
+      {
+        "path": "patches/coop_spawns.py",
+        "size": 13649,
+        "sha256": "4425f38448dc916ef87aba4f2bc0884eb4f548183a6d4343daec666de4c5981f"
+      },
+      {
+        "path": "patches/custom_jewels.py",
+        "size": 15361,
+        "sha256": "2dc625802cc08f4e8513c1328ec730a00871fb4f4c08ed45a89548027f485f54"
+      },
+      {
+        "path": "patches/custom_jewels_bans.py",
+        "size": 15535,
+        "sha256": "6a2617e84c502348240c8532bcef90601877a34de912ac034418390d3a3d970b"
+      },
+      {
+        "path": "patches/custom_jewels_icons.py",
+        "size": 3993,
+        "sha256": "c683ab58342de12fb4ddb13b8e795cc840a44d442b2a048a049a967dd795abf9"
+      },
+      {
+        "path": "patches/global_talents.py",
+        "size": 2767,
+        "sha256": "3d7d5c7df8ca8db93c8878311fa300f37d055b5eafe51b6a2b75136121cf4e70"
+      },
+      {
+        "path": "patches/global_zones.py",
+        "size": 3381,
+        "sha256": "9e9f3ded225fa924e8e5ced330e3ae7643e029aaef2a0a5c677be886b80cf34e"
+      },
+      {
+        "path": "patches/magnet_homing.py",
+        "size": 13753,
+        "sha256": "d29eaff91757ebcffa58aaaa63189ff1e915ad892a16b7a98f90d95d6c48c561"
+      },
+      {
+        "path": "patches/pvp_feed.py",
+        "size": 4917,
+        "sha256": "5835851d743b457be7f5f89da3c028ca9f5cf227ccfc69bcd6bbd55a5e78dc20"
+      },
+      {
+        "path": "patches/quest.lua",
+        "size": 12936,
+        "sha256": "f02a603c25252facd6e5a133f2480715077ac71f7a31391caf6060aec62b14df"
+      },
+      {
+        "path": "patches/quest.py",
+        "size": 18714,
+        "sha256": "074a8dfb1eccced2dc8f9036d27bc6c6d41719659db2496a4ff9d5243a4eceae"
+      },
+      {
+        "path": "pvp.py",
+        "size": 133289,
+        "sha256": "e38c5293c15be4dcd0f0ff63734194cf4fd94b083a9cfc0dff636d37bce68847"
+      },
+      {
+        "path": "pvp_server.txt",
+        "size": 52,
+        "sha256": "7f1855be9b69a149fab714a4eae5788f495f9ac0ec551ba386373300dd889dd4"
+      },
+      {
+        "path": "README.md",
+        "size": 22657,
+        "sha256": "1bdc11feff821cebfdd5430e9db440a50909b126fbbd41463d6d87ccefd2e6bf"
+      },
+      {
+        "path": "RELEASE.json",
+        "size": 697,
+        "sha256": "38e1b59ab923ff986c83334b127a09c7972ae133ee3d0f1fa264e7ff4a8adbce"
+      },
+      {
+        "path": "requirements.txt",
+        "size": 53,
+        "sha256": "3582e6961359d82cbdab4913ae2f1217475e52fb29a2380d9c6bcc14eeb57dd9"
+      },
+      {
+        "path": "save.py",
+        "size": 12035,
+        "sha256": "3b44fcd5cedd298a712a0091f637850d04b5a5e532c4a76fcb8a4a4df84b5f7a"
+      },
+      {
+        "path": "VERSION",
+        "size": 20,
+        "sha256": "701ab118aea2c0a548d67b9655a169cab85eff6b642e0ac08a35b03674ac015f"
+      }
+    ]
+  }
+}

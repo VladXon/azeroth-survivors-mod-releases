@@ -1,0 +1,1 @@
+Лицензии компонентов внутри Azeroth Launcher.exe: Python, Tcl/Tk, PyInstaller, pywebview, pythonnet, clr_loader, bottle, typing_extensions, cffi, pycparser, proxy_tools (BSD; файла лицензии в пакете нет), capstone, keystone, pefile, websocket-client и 7-Zip (7z.exe, 7z.dll: GNU LGPL с ограничением unRAR, исходный код на https://www.7-zip.org/).

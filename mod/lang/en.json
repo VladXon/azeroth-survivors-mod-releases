@@ -1,0 +1,9 @@
+{
+  "jewel.difficulty": "Ring of Difficulty",
+  "+{v}% more enemies; enemy health grows by 40% of that and enemy damage by 20%": "+{v}% more enemies; enemy health grows by 40% of that and enemy damage by 20%",
+  "jewel.thorns": "Ring of Thorns",
+  "Melee attackers take +{v}% of the damage they deal you": "Melee attackers take +{v}% of the damage they deal you",
+  "BANNED": "BANNED",
+  "BANNED: never offered. Double-click in the Codex: allow.": "BANNED: never offered. Double-click in the Codex: allow.",
+  "Picked again, it grows by nearly the pick's whole worth every time. Double-click in the Codex: disable.": "Picked again, it grows by nearly the pick's whole worth every time. Double-click in the Codex: disable."
+}

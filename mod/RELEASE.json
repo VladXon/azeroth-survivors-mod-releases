@@ -1,0 +1,22 @@
+{
+  "release_version": "2026.10.24.1-0c64e07",
+  "source_commit": "0c64e07307cfce75c2b0e5a830d281dc15f7e5d3",
+  "python_bundled": "in Azeroth Launcher.exe",
+  "platform": "Windows x64",
+  "updater_format": "launcher manifest 1",
+  "server_migrations": [
+    "https://azeroth-pvp.ync-erver.workers.dev"
+  ],
+  "game": {
+    "build_id": "sha256:dc104533",
+    "original_exe_sha256": "dc10453398ceb398076f6d3b6ac7859470de2ff7ccd68ac1d00a02f9f1e5209a",
+    "numeric_build": null
+  },
+  "verification": {
+    "status": "see the release notes"
+  },
+  "released_on": "2026-10-24",
+  "tested_game_sha256": [
+    "dc10453398ceb398076f6d3b6ac7859470de2ff7ccd68ac1d00a02f9f1e5209a"
+  ]
+}

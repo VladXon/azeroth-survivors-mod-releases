@@ -1,0 +1,4 @@
+capstone
+keystone-engine
+pefile
+websocket-client
