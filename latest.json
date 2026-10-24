@@ -22,158 +22,158 @@
     "files": [
       {
         "path": "apply_update.ps1",
-        "size": 6021,
-        "sha256": "aae39ecad286cfb37c9e98990995b50a704493e7d1247a54038c1ee6fbd05852"
+        "size": 5909,
+        "sha256": "a53fbc560def45931bfd02099c54a5ca6eae16b04d8df35ace2400abcb7162ac"
       },
       {
         "path": "auto_update.py",
-        "size": 10212,
-        "sha256": "732a465bfe9a678a18438ee69a80d56392aced6d30ade5c0b3c6327ea1b40b5b"
+        "size": 10000,
+        "sha256": "f9436691a2683ee49fd99bf96ecbc70079c0ff92f521a2bb45d46b81b1aab31e"
       },
       {
         "path": "bans.py",
-        "size": 4591,
-        "sha256": "da2df49ee971d684d4a90f1d6198e221987309406da0b81a4dcfb73211dc2d02"
+        "size": 4480,
+        "sha256": "d350ef21e30070ec66106aa1ae17a181cd5acdd9cbc047993bb024ca7c1ca755"
       },
       {
         "path": "choice_shield.py",
-        "size": 7487,
-        "sha256": "990a1d5f0ebec79c61097733811e46f7802f7a58b99ef83dce8a960df853e896"
+        "size": 7292,
+        "sha256": "6f7fd12612dde92319411e271d9c51035914fe6d8bbc468b9f8b222beea7a8ab"
       },
       {
         "path": "docs/DEVELOPMENT.md",
-        "size": 20034,
-        "sha256": "0ff1324e66af909915bf0cf83246ba74e1eb9ad4a52e6565b0bf1da27396cca2"
+        "size": 19777,
+        "sha256": "cd1afeda6df4ae39fb1af1f64b5c4a73d7596389334604827e5655fc08c3ac94"
       },
       {
         "path": "lang/en.json",
-        "size": 734,
-        "sha256": "1e907d6e5537f1a7c72a70cf7c7c1a3b5a4a19a99f403424060972f08bb073e1"
+        "size": 725,
+        "sha256": "53c0c74a696447fc11c8607e1dfcce88ed5745aaa957d119590dd7016fe5c71f"
       },
       {
         "path": "lang/ru.json",
-        "size": 17167,
-        "sha256": "ccd464979893e7a8fd8fdeb228f0371dd3384066456ae6e4cd037b78463568fc"
+        "size": 17094,
+        "sha256": "fcf2dbb12623349f32def848593ec3ebf9ae378d68da5e94b5b1be1efd4a4978"
       },
       {
         "path": "launcher.pyw",
-        "size": 5656,
-        "sha256": "c755c98b912cc5eb75f42a5eda28f862376b785f5881ad7c8115a455f02d71c2"
+        "size": 5489,
+        "sha256": "8cafef847d785574da72ada502af344992fff2a6ec05cea592ef5fea565ffe06"
       },
       {
         "path": "offsets.py",
-        "size": 21205,
-        "sha256": "5d7e3066533b04b42a47ce66ec7edc30a30a8d1448ccfca49b6678f0f5b7ba50"
+        "size": 20788,
+        "sha256": "66f43ad6212f3128b585a5985c0100fdbd0188b2a600bb95e3e77ebe178aaf7b"
       },
       {
         "path": "patch_azeroth.py",
-        "size": 17893,
-        "sha256": "8ca28db9f4362208e54aaa5c06ab7d0d217b32044ab7241e91fa0ddc4579f49c"
+        "size": 17505,
+        "sha256": "fe19cd1b8a073dc849a18cbca3990355a506d6e7b38831069fc51ef247fb74ad"
       },
       {
         "path": "patches/coop_choice.py",
-        "size": 19317,
-        "sha256": "657eda816c4bc22fed8405be9314e43c6b68c6915c52f8c54a3bf568f8a1e327"
+        "size": 18776,
+        "sha256": "bac1c076ab9791e042ed5b06f5131fc31b29efe6f55d5da3aa5548ee863619cb"
       },
       {
         "path": "patches/coop_choice_cast.py",
-        "size": 7291,
-        "sha256": "f8a4decd023bece3bd58eff7f1e82eaf81ae19645ec40fa6b20788e6f9fe2d1f"
+        "size": 7055,
+        "sha256": "aaace0d33afb356e4edbe3901ebbe445aae7166846c2891cc709cb230ed906f6"
       },
       {
         "path": "patches/coop_choice_push.py",
-        "size": 12034,
-        "sha256": "5954abce3e812fa7774d885bdeec7d009af7f9995e15a360d7ae526477005606"
+        "size": 11731,
+        "sha256": "0aa32c00df496a47e3eefd20dde9ee0c50927a415edd08f175dd8da7e7387561"
       },
       {
         "path": "patches/coop_ghost.py",
-        "size": 126189,
-        "sha256": "090db3ace9b913c433f7815393a7baabc6a88dcb9810846384a99ad36387bacb"
+        "size": 123568,
+        "sha256": "1ae7e4e620029b9a3728fe3ffdec537d81de1b6c04f2836263f1ddce32958ba0"
       },
       {
         "path": "patches/coop_shared.py",
-        "size": 33972,
-        "sha256": "d389b59ac89be14091b14c0a9916962a576aeb783b5360fb2ed91c8c94086a88"
+        "size": 33179,
+        "sha256": "1de9ad89a28a9af164a01822d75b54e5205ccec1389f1843701b5d186c35b80f"
       },
       {
         "path": "patches/coop_spawns.py",
-        "size": 13649,
-        "sha256": "4425f38448dc916ef87aba4f2bc0884eb4f548183a6d4343daec666de4c5981f"
+        "size": 13363,
+        "sha256": "4e233be254379fd7f9e8b3579d43b5a7284bd2b690eff5b8f2c3ab31b4d4885a"
       },
       {
         "path": "patches/custom_jewels.py",
-        "size": 15361,
-        "sha256": "2dc625802cc08f4e8513c1328ec730a00871fb4f4c08ed45a89548027f485f54"
+        "size": 15060,
+        "sha256": "244f32e25115ffe583ed3cf78c88027d868098652e1e632d2a0ce2e5c725a718"
       },
       {
         "path": "patches/custom_jewels_bans.py",
-        "size": 15535,
-        "sha256": "6a2617e84c502348240c8532bcef90601877a34de912ac034418390d3a3d970b"
+        "size": 15210,
+        "sha256": "8d08891361e9cd0f99d46b4cecc8f45f4ad87dff3305ad4a2a1c680173a94f3f"
       },
       {
         "path": "patches/custom_jewels_icons.py",
-        "size": 3993,
-        "sha256": "c683ab58342de12fb4ddb13b8e795cc840a44d442b2a048a049a967dd795abf9"
+        "size": 3916,
+        "sha256": "0f4d13d6e817015e5c6eb333e738f62b3fc23c127958d51f9b29ab418da37a10"
       },
       {
         "path": "patches/global_talents.py",
-        "size": 2767,
-        "sha256": "3d7d5c7df8ca8db93c8878311fa300f37d055b5eafe51b6a2b75136121cf4e70"
+        "size": 2695,
+        "sha256": "9d7fb9f4e087433753a624c1b762cfbfa0fb889742fdb9ce1140f99d89e30251"
       },
       {
         "path": "patches/global_zones.py",
-        "size": 3381,
-        "sha256": "9e9f3ded225fa924e8e5ced330e3ae7643e029aaef2a0a5c677be886b80cf34e"
+        "size": 3317,
+        "sha256": "ce2a5532aeaeca235c8610839eee3fff443e7ed09581d38529f3e9b536c37098"
       },
       {
         "path": "patches/magnet_homing.py",
-        "size": 13753,
-        "sha256": "d29eaff91757ebcffa58aaaa63189ff1e915ad892a16b7a98f90d95d6c48c561"
+        "size": 13483,
+        "sha256": "6f0197daa5c1e571b72bfdb79ac8188161e6b183c1eb83d7bcf6438aa6aa3dc3"
       },
       {
         "path": "patches/pvp_feed.py",
-        "size": 4917,
-        "sha256": "5835851d743b457be7f5f89da3c028ca9f5cf227ccfc69bcd6bbd55a5e78dc20"
+        "size": 4796,
+        "sha256": "3fdb4b1caa18ba750ba06aef97040b89110ae0cdb1412958b1b178cbf8ace317"
       },
       {
         "path": "patches/quest.lua",
-        "size": 12936,
-        "sha256": "f02a603c25252facd6e5a133f2480715077ac71f7a31391caf6060aec62b14df"
+        "size": 12531,
+        "sha256": "1254b219add60f98701404ef887853edd96f6426e1fd52e5c8e8de86d0cffa7c"
       },
       {
         "path": "patches/quest.py",
-        "size": 18714,
-        "sha256": "074a8dfb1eccced2dc8f9036d27bc6c6d41719659db2496a4ff9d5243a4eceae"
+        "size": 18261,
+        "sha256": "2ba40e9d5b7f1e8bc04b8eb693233f18cc6fb3f5f009ad440acd54d82ef85d4c"
       },
       {
         "path": "pvp.py",
-        "size": 133289,
-        "sha256": "e38c5293c15be4dcd0f0ff63734194cf4fd94b083a9cfc0dff636d37bce68847"
+        "size": 130717,
+        "sha256": "ca68e5ab32372a88cb50c32011dc52fee906acd9268e6ba12da214df74929263"
       },
       {
         "path": "pvp_server.txt",
-        "size": 52,
-        "sha256": "7f1855be9b69a149fab714a4eae5788f495f9ac0ec551ba386373300dd889dd4"
+        "size": 51,
+        "sha256": "e008a6afb68058fccb6780994d7d91cde0a996d9155011f37b98835112f59ef0"
       },
       {
         "path": "README.md",
-        "size": 22657,
-        "sha256": "1bdc11feff821cebfdd5430e9db440a50909b126fbbd41463d6d87ccefd2e6bf"
+        "size": 22402,
+        "sha256": "0b7fa50897a53b4ae6cd0756f23c8928210b1ca6ed37e662cf9510917e6f8e1b"
       },
       {
         "path": "RELEASE.json",
-        "size": 697,
-        "sha256": "38e1b59ab923ff986c83334b127a09c7972ae133ee3d0f1fa264e7ff4a8adbce"
+        "size": 676,
+        "sha256": "8986924e4d437895d6a23b21944e65dc4792437e65051aa152eefb1360333f83"
       },
       {
         "path": "requirements.txt",
-        "size": 53,
-        "sha256": "3582e6961359d82cbdab4913ae2f1217475e52fb29a2380d9c6bcc14eeb57dd9"
+        "size": 49,
+        "sha256": "c18b2af5dc5d469b1556617fc5f90b1a723bf07ee3d07a4bf545b3cf6b05b882"
       },
       {
         "path": "save.py",
-        "size": 12035,
-        "sha256": "3b44fcd5cedd298a712a0091f637850d04b5a5e532c4a76fcb8a4a4df84b5f7a"
+        "size": 11742,
+        "sha256": "fca0866348a29608a7d3cb685aa6616f1ec11b489dbdb3af582bda7f3b02b1f8"
       },
       {
         "path": "VERSION",
