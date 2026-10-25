@@ -28,7 +28,7 @@ from urllib.parse import parse_qs, urlsplit
 
 PORT = 47630
 DISCOVERY_PORT = 47631
-HZ = 30  # co-op relay rate the companions use on this hub (the internet server: 20)
+HZ = 60  # co-op relay rate the companions use on this hub, a CS-like tick (the internet server: 20)
 MAX_PARTY = 2  # co-op players per match: the game shows one partner so far
 ZONES = ["elwynn", "duskwood", "wsg", "ungoro", "ab", "feralas", "arena", "sm", "av", "brm", "aq", "naxx"]
 PVP_ZONES = ZONES[7:]
@@ -98,7 +98,7 @@ def relay_frame(hero, nick):
            "z": clamp(hero.get("z"), 1e5), "facing": clamp(hero.get("facing"), 10),
            "phase": str(hero.get("phase", ""))[:16], "lvl": int_in(hero.get("lvl"), 0, 1000),
            "dps": max(0, clamp(hero.get("dps"), 1e6)), "flags": int_in(hero.get("flags"), 0, 7)}
-    for k, lim in (("t", 1e7), ("st", 1e9)):
+    for k, lim in (("t", 1e7), ("st", 1e9), ("pg", 1e4)):
         if is_number(hero.get(k)):  # the sender's run clock and steady clock, only from senders that have them
             out[k] = max(0, clamp(hero[k], lim))
     summons = hero.get("summons") if isinstance(hero.get("summons"), list) else []

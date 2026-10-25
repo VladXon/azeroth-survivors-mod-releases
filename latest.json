@@ -1,8 +1,8 @@
 {
   "format": 1,
-  "version": "2026.10.25.2-8592e4c",
-  "tag": "v2026.10.25.2-8592e4c",
-  "source_commit": "8592e4c266bf6ee5d352951aec434d44c70f69b6",
+  "version": "2026.10.25.3-69a7b3d",
+  "tag": "v2026.10.25.3-69a7b3d",
+  "source_commit": "69a7b3d86253d2f99da485a11db63f14517a82ad",
   "server_migrations": [
     "https://azeroth-pvp.ync-erver.workers.dev"
   ],
@@ -15,8 +15,8 @@
   },
   "launcher": {
     "asset": "Azeroth.Launcher.exe",
-    "size": 25646364,
-    "sha256": "cceac640b93259a0b2ff31ac35a6f6eb7e605de74e01ab208af0d559e24dffe9"
+    "size": 25650699,
+    "sha256": "4877ca016459f2e6739c3d683005317fe4ed6d956316350ce15ef6432751df25"
   },
   "mod": {
     "files": [
@@ -47,8 +47,8 @@
       },
       {
         "path": "lan_server.py",
-        "size": 34231,
-        "sha256": "7d665413b156499957658714efe76e119605e2c3bb5ba56a4f7d5233a2dc4954"
+        "size": 34260,
+        "sha256": "eaf8c37181e39511d6dc7c4478e6be81cf9d810221a411a27c56b6b8397bdf44"
       },
       {
         "path": "lang/en.json",
@@ -152,8 +152,8 @@
       },
       {
         "path": "pvp.py",
-        "size": 136182,
-        "sha256": "591b19d8d9f22dbf456d33b664b3e1cc65f0f0280abbb3d57dba86dd24e1efa8"
+        "size": 139304,
+        "sha256": "78730d7761be880a2750845219a772b24164a72b2feb7dff83c0e54f033e37fa"
       },
       {
         "path": "pvp_server.txt",
@@ -162,13 +162,13 @@
       },
       {
         "path": "README.md",
-        "size": 25807,
-        "sha256": "e23e756ac7fdb79c1bc280e7a393f5df3a27ce367dac3be4288e29f0df9dac3c"
+        "size": 26614,
+        "sha256": "ab3fffbfad6850e44c5b8095ef0b8918a57e7e0c391c6a7e74d23a2d19cd7b37"
       },
       {
         "path": "RELEASE.json",
         "size": 676,
-        "sha256": "07b3432ead095bf73f2bcb67301bfce0d810bebec20faaa2d3d0d48eb530a4c8"
+        "sha256": "e4471590d8a7e930eac18ed267c8190fe96684fc79f6b1003fce6975fff7ef2c"
       },
       {
         "path": "requirements.txt",
@@ -183,7 +183,7 @@
       {
         "path": "VERSION",
         "size": 20,
-        "sha256": "4b152a8de410615303209ae358f421df4f8d52fc2db5c90a79db58b54b5849bb"
+        "sha256": "83865a8b1346972ebca2800773148e19f69e5c88ff7d3c80d0ccde4d4c0bfc49"
       }
     ]
   }

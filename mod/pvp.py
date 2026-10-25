@@ -44,7 +44,7 @@ GHOST_CONNECT_GRACE_S = 15  # allow the partner to launch/join before probing a 
 FRAME_MAX = 8000  # bytes; the relay (server/) refuses frames over 8192 (relay 3; 4096 before)
 GHOST_STALE_S = 3  # the ghost hides when the partner sent nothing for this long
 PLAYOUT_S = 0.2  # the partner is shown at most this far behind its newest frame (the jitter buffer's ceiling)
-PLAYOUT_MIN_S = 0.05  # ...and at least this far: on a LAN two sample intervals and the jitter are less
+PLAYOUT_MIN_S = 0.03  # ...and at least this far: on a LAN at 60 Hz two sample intervals and the jitter are less
 EXTRAPOLATE_S = 0.15  # a late frame: the partner walks on along its last velocity this long, then stops
 PING_EVERY_S = 2.0  # a WebSocket ping to the relay (the server or a LAN hub) for the connection's round trip
 OFFSET_CREEP = 0.002  # s per partner sample (~20 ms a second): how fast the jitter buffer follows a slower network
@@ -55,6 +55,7 @@ RUN_OVER = ("died", "finished", "timeout", "forfeit", "left")  # server statuses
 # either way (a late start, a stalled host) are jumped, any other is slewed in steps of at most STEP every
 # EVERY seconds: +-30 % clock speed, small enough that the enemies, which move on this clock, don't jerk
 CLOCK_TOLERANCE_S, CLOCK_JUMP_S, CLOCK_STEP_S, CLOCK_EVERY_S = 0.15, 1.0, 0.075, 0.25
+CLOCK_TOLERANCE_MIN_S = 0.04  # a steady link (a LAN) keeps the clocks this close: the tolerance follows the jitter
 CLOCK_JUMP_HOLD_S = 1.0  # after a jump: the exe has surely applied it before the gap is measured again
 HEARTBEAT_S = 45  # co-op progress is re-sent this often even unchanged (a paused run clock stands still)
 LABEL_WRAP = 420  # px, the companion window's widest text line
@@ -1011,12 +1012,13 @@ def new_picks(seen, now):
     return [n - s if n - s <= MAX_PICKS_PER_FRAME else 0 for n, s in zip(now, seen)], now
 
 
-def clock_step(gap):
-    """The guest's run clock correction for a gap (the host's clock minus mine, s): none within
-    CLOCK_TOLERANCE_S, the whole gap past CLOCK_JUMP_S, else a step of at most CLOCK_STEP_S."""
-    if abs(gap) < CLOCK_TOLERANCE_S:
+def clock_step(gap, tolerance=CLOCK_TOLERANCE_S):
+    """The guest's run clock correction for a gap (the host's clock minus mine, s): none within the
+    tolerance, the whole gap past CLOCK_JUMP_S, else half of it, at most CLOCK_STEP_S."""
+    if abs(gap) < tolerance:
         return 0.0
-    return gap if abs(gap) > CLOCK_JUMP_S else max(-CLOCK_STEP_S, min(CLOCK_STEP_S, gap))
+    # half the gap a step: many small corrections, never one jerk of the enemies (they move on this clock)
+    return gap if abs(gap) > CLOCK_JUMP_S else max(-CLOCK_STEP_S, min(CLOCK_STEP_S, gap / 2))
 
 
 def link_error(e):
@@ -1100,6 +1102,7 @@ class GhostLink:
         self.interval = 1 / self.hz  # the partner's mean sample interval (s, sender clock)
         self.jitter = PLAYOUT_S / 3  # mean lateness of a sample against the least delayed one (s)
         self.run_seq, self.run_seen = None, 0.0  # my AZSRUN sample and when I first saw it
+        self.tick_clock, self.tick_seen = None, 0.0  # the exe's last tick (its run clock) and when I first saw it
         self.visible = False
         self.dead_since = None  # when the partner's phase became dead
         self.meter = DpsMeter()
@@ -1110,6 +1113,7 @@ class GhostLink:
         self.choice_peer = ChoicePeerTracker()
         self.choice_state_cache = None
         self.events = []  # the partner's hits waiting for the ghost's ring
+        self.timeline = deque()  # (sender time, hits) not yet due: they play when the shown partner gets there
         self.unsent_ev = []  # my hits read from the exe and not yet in a frame sent
         self.arrivals = deque(maxlen=128)  # when the partner's position frames came (frames a second)
         self.ping_ms, self.ping_at = None, 0.0  # round trip to the relay (WebSocket ping), when the last ping went
@@ -1137,6 +1141,8 @@ class GhostLink:
 
     def run(self):
         log.info("relay %s: start (%s)", self.match_id, "host" if self.host else "guest")
+        # steady ticks: Windows waits in 15.6 ms steps by default (a 30 Hz loop stepped 31-47 ms); games ask for 1 ms
+        timer = ctypes.windll.winmm.timeBeginPeriod(1) == 0
         next_at = time.monotonic()
         while not self.stop.is_set():
             game = None
@@ -1166,16 +1172,22 @@ class GhostLink:
                 self.ghost.write(self.ally() if visible else None, self.control(), self.lang, self.grants,
                                  (*self.adjust, self.partner_end), self.bosses)
                 # a full ring takes some: the rest wait for the next step (the exe plays 16 a tick)
+                if not visible:
+                    self.timeline.clear()
+                self.due_events()
                 self.events = self.events[self.ghost.push_events(self.events):] if visible else []
                 if self.shared:
                     self.shared.write_exe(time.monotonic(), self.partner, self.partner_live())
             else:
                 self.events = []
+                self.timeline.clear()
             if self.offline and not self.defeat:
                 break  # session over and nothing left to finish
             next_at = max(next_at + 1 / self.hz, time.monotonic())
             self.stop.wait(next_at - time.monotonic())
         log.info("relay %s: stop", self.match_id)
+        if timer:
+            ctypes.windll.winmm.timeEndPeriod(1)
         self.drop()
         if self.ghost and self.ghost.handle:  # hide our last write; never open the game just for that
             self.ghost.write(None)
@@ -1216,13 +1228,13 @@ class GhostLink:
         if mine is None or mine[1] not in (1, 2, 3):
             return
         now = time.monotonic()
-        gap = host_t + (now - self.partner_at) - mine[0]
+        gap = host_t + self.one_way_s() + (now - self.partner_at) - mine[0]
         self.gap_max = max(self.gap_max, abs(gap))
         if now - self.gap_logged >= 60:
             log.info("relay %s: run clock within %.2f s of the host's over the last minute; link %s", self.match_id,
                      self.gap_max, self.net_stats())
             self.gap_max, self.gap_logged = 0.0, now
-        step = clock_step(gap)
+        step = clock_step(gap, max(CLOCK_TOLERANCE_MIN_S, min(CLOCK_TOLERANCE_S, 3 * self.jitter + 0.02)))
         if not step:
             return
         if step == gap:
@@ -1259,7 +1271,7 @@ class GhostLink:
                 return
             url = SERVER.rstrip("/").replace("http", "ws", 1) + f"/api/matches/{self.match_id}/ws"
             self.ws = websocket.create_connection(url, timeout=1, header=[f"Authorization: Bearer {self.token}", f"User-Agent: {USER_AGENT}"])
-            self.ws.settimeout(0.02)
+            self.ws.settimeout(0.002)  # the drain waits this long each step: more held a 60 Hz loop at ~47
             self.connected_at = time.monotonic()
             self.last_sent_at = None
             self.static_sent = None  # a new socket: the partner may have missed our looks
@@ -1274,6 +1286,8 @@ class GhostLink:
         if seq != self.run_seq:
             self.run_seq, self.run_seen = seq, time.monotonic()
         frame["st"] = round(self.run_seen, 3)  # the sample's time: the partner's jitter buffer orders by it
+        if self.ping_ms is not None:
+            frame["pg"] = round(self.ping_ms)  # my round trip to the relay: the partner's estimate of the trip
         if clock and clock[1] in (1, 2, 3, 4):  # dead too: the partner's run ends on my clock's last value
             frame["t"] = round(clock[0], 3)
         mine = self.hits.read() if self.hits and game else None
@@ -1284,6 +1298,7 @@ class GhostLink:
                 frame["bh"] = [list(b) for b in mine[2]]
         if self.shared:
             frame.update(self.shared.outgoing(time.monotonic()))
+            self.tick_hero(frame)
         self.attach_choice_frame(frame)
         text = json.dumps(frame, separators=(",", ":"))
         while len(text) > FRAME_MAX and frame.get("ev"):  # the relay closes the socket on bigger frames
@@ -1317,6 +1332,18 @@ class GhostLink:
                 self.take_frame(message)
         self.sync_clock()
 
+    def tick_hero(self, frame):
+        """My hero from the exe's own tick (the shared enemies block: run clock and hero position, every game
+        tick) instead of the AZSRUN text the game sends its UI less often: each frame then carries a fresh
+        position, stamped with when that tick was first seen."""
+        mine = self.shared.mine
+        if not mine or frame.get("phase") not in IN_RUN or not all(map(math.isfinite, mine[1])):
+            return
+        if mine[0] != self.tick_clock:
+            self.tick_clock, self.tick_seen = mine[0], time.monotonic()
+        frame["x"], frame["y"], frame["z"] = (round(v, 3) for v in mine[1])
+        frame["st"] = round(max(self.tick_seen, self.run_seen), 3)
+
     def take_frame(self, message):
         """A position frame from the partner."""
         markers, clean_ef = unpack_choice_ef(message.get("ef"))
@@ -1346,7 +1373,11 @@ class GhostLink:
         # only from a run: a death screen still streams the last run's table, its dead bosses included
         self.bosses = boss_health(message.get("bh")) if message.get("phase") in IN_RUN else None
         if isinstance(message.get("ev"), list):
-            self.events = (self.events + message["ev"])[-Ghost.EV_RING:]
+            st = message.get("st")
+            if isinstance(st, (int, float)) and self.trail:
+                self.timeline.append((st, message["ev"]))
+            else:
+                self.events = (self.events + message["ev"])[-Ghost.EV_RING:]
             granted, self.partner_picks = new_picks(self.partner_picks, message.get("rw"))
             if self.bosses is not None and self.ghost and self.ghost.boss:
                 granted[1] = 0  # both exes share the guardians' health: each kill rewards on both screens
@@ -1429,6 +1460,25 @@ class GhostLink:
         self.offset = now - key if self.offset is None else min(now - key, self.offset + OFFSET_CREEP)
         self.jitter += (now - key - self.offset - self.jitter) / 16
 
+    def due_events(self):
+        """Moves the hits whose frame the shown partner has reached (its playout time) to the ring's queue:
+        a hit lands where and when the partner is seen casting it, not a playout delay ahead of it."""
+        if not self.timeline:
+            return
+        t = time.monotonic() - (self.offset or 0.0) - self.playout_delay()
+        while self.timeline and (self.timeline[0][0] <= t or len(self.timeline) > 64):
+            self.events = (self.events + self.timeline.popleft()[1])[-Ghost.EV_RING:]
+
+    def one_way_s(self):
+        """The partner's frames' trip to me (s): half of both round trips to the relay; the partner's, when its
+        frames don't carry it, taken as mine."""
+        mine = self.ping_ms
+        if mine is None:
+            return 0.0
+        theirs = (self.partner or {}).get("pg")
+        theirs = theirs if isinstance(theirs, (int, float)) and 0 <= theirs < 10000 else mine
+        return (mine + theirs) / 2000
+
     def net_stats(self):
         """The link's quality for the window: round trip to the relay, the partner's frames a second over
         the last 2 s, their jitter and how far behind the partner is shown (ms; None: not measured yet)."""
@@ -1494,6 +1544,7 @@ class GhostLink:
         self.partner = None
         self.partner_at = 0.0
         self.unsent_ev = []  # hits from before a reconnect are stale for the partner
+        self.timeline.clear()
         self.choice_peer = ChoicePeerTracker()
         if self.shared and self.shared.host:
             self.shared.choice = {"host_shield": False, "guest_shield": False, "both": False}
