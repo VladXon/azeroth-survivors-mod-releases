@@ -14,9 +14,11 @@ Roles (control bits in the ghost block, set by the companion, pvp.SharedSync):
   it). While LIVE the tick mirrors the host's table: missing ids are spawned through spawn_enemy
   (cap bypassed, guid low 24 bits = host id | MIRROR), mirrors the host dropped vanish without
   rewards, host-owned mirrors take the host's movement (a new segment and the game's own
-  MONSTER_MOVE) and are lured like above, the guest's own run normally. Health only goes down: each
-  side deals what its copy has above the other's fraction, a death is a kill through enemy damage
-  (own drops and xp on each screen). Guest records that aren't mirrors vanish while LIVE (the solo
+  MONSTER_MOVE) and are lured like above, the guest's own run normally. Damage adds up: each side
+  publishes its own damage so far (a fraction of max health: what its copy lost minus what it was
+  dealt for the partner) and deals what the partner's grew since the last tick, once (the record
+  remembers what it was dealt); a death is a kill through enemy damage (own drops and xp on each
+  screen). Two heroes on one enemy kill it twice as fast, not as fast as the stronger one alone. Guest records that aren't mirrors vanish while LIVE (the solo
   enemies of a disconnect). SOLO opens the spawner again.
 Shared enemies: records that are no boss, no guardian, no boss add (+0xd0 = -1) and whose template
 lies in the zone's list.
@@ -32,13 +34,15 @@ Block "AZSENMY1" (shared_rva):
   +IN u32 seq (companion, odd while writing), u32 count, u32 flags (1: complete), u32 0, +IN+16 MAX
   entries: the partner's side (guest: the host's table; host: owners and the guest's fractions).
   Entry (ENTRY bytes): u32 id (guid & 0xffffff), u8 template index, u8 flags, u16 0, f32 x, y, z (where
-  it is heading), f32 end of that move (run clock), f32 health fraction (0 dead).
+  it is heading), f32 end of that move (run clock), f32 own damage so far (fraction of max health; in the
+  partner's side the partner's own damage).
   Flags I publish: DEAD, ALLY_OWNS (an owner I was given: the partner's hero runs it). A boss or guardian
   has id BOSS_ID | its boss-sync key and is never spawned, killed or vanished through the table.
   Flags I take: DEAD (kill it), LURE (the partner runs it), NEW_SEG (guest: take this move), GONE
   (vanish without rewards).
 A record's owner lives in the record's tail padding (never written by the game, moved with it):
-+owner u8 1 = lured, +owner+1 u16 = guid & 0xffff (stale padding of another record never matches).
++owner u8 1 = lured, +owner+1 u16 = guid & 0xffff (stale padding of another record never matches),
++owner+3 f32 the partner's damage already dealt to it (valid while the guid matches).
 """
 import re
 import struct
@@ -57,7 +61,8 @@ LIVE, GUEST, SOLO = 16, 32, 64  # ghost block control bits
 MIRROR = 0x800000
 BOSS_ID = 0x1000000  # table ids of bosses and guardians: this | boss-sync key
 SPAWNS_PER_TICK = 16
-EPS = 0.002  # health fractions closer than this are left alone
+EPS = 0.002  # partner damage below this (fraction of max health) waits until it adds up
+LEDGER_SIG = 0x5EDA0002  # in shared_sig: games that add damage never pair with ones that took the lower health
 MIN_DUR = 0.05  # s: the shortest move a host segment becomes
 CORPSE_AGO = 1000.0  # s: a vanished record's time of death, long past the AI's corpse delay
 
@@ -119,8 +124,10 @@ def find(p, full, boss, enemy_damage, func_range):
     boss_off, guard_off, dead, add, guid, tpl = (init.group(1)[0], init.group(2)[0], *(s32(init.group(i)) for i in range(3, 7)))
     owner = s32(elite.group(1)) + 1
     p.check(boss_off == boss["boss"] and guard_off == boss["guard"] and dead == boss["dead"] and guid == full["guid"]
-            and s32(elite.group(2)) == full["enemies"] + 8 and owner + 3 <= full["size"],  # 3 pad bytes, 7 after 109
+            and s32(elite.group(2)) == full["enemies"] + 8,
             "shared enemies: record layout disagrees")
+    # owner, guid and the partner's dealt damage: 3 pad bytes before build 109 (no room: no shared enemies), 7 after
+    p.check(owner + 7 <= full["size"], "shared enemies: no padding for the damage ledger")
     ed_lo, ed_hi = (p.off(v) for v in func_range(p, enemy_damage))
     died = list(re.finditer(DIED % re.escape(struct.pack("<i", dead)), p.d[ed_lo:ed_hi], re.S))
     p.check(len(died) == 1, f"shared enemies: {len(died)} deaths in enemy damage")
@@ -142,7 +149,7 @@ def find(p, full, boss, enemy_damage, func_range):
             "counter": s32(counter.group(1)), "add": add, "tpl": tpl, "owner": owner, "died_at": died_at,
             "effects": effects, "spline": s32(send.group(1)), "nav": s32(send.group(2)),
             "ground": p.va(send.end()) + s32(send.group(3)), "builder": p.va(build.end()) + s32(build.group(1)),
-            "sig": template_sig(p, zones, stride, tlist_off)}
+            "sig": template_sig(p, zones, stride, tlist_off) ^ LEDGER_SIG}
 
 
 def template_sig(p, zones, stride, tlist):
@@ -267,6 +274,7 @@ def tick_code(s, g, eb, sh, va):
     full, gs, block = g["full"], g["state"], g["block"]
     size, guid, dead = full["size"], full["guid"], s["dead"]
     hp, mx, own = full["hp"], s["max"], s["owner"]
+    acc = own + 3  # the partner's damage dealt to the record so far (fraction of its max health)
     lerp_axis = "".join(f"""
             movss xmm1, dword ptr [rsi + {full['to'] + 4 * k:#x}]
             subss xmm1, dword ptr [rsi + {full['from'] + 4 * k:#x}]
@@ -427,7 +435,17 @@ def tick_code(s, g, eb, sh, va):
             xorps xmm1, xmm1
             maxss xmm0, xmm1
         p_frac:
-            movss dword ptr [rdi + 24], xmm0
+            mov eax, 0x3f800000
+            movd xmm1, eax
+            subss xmm1, xmm0
+            mov dx, word ptr [rsi + {guid:#x}]
+            cmp dx, word ptr [rsi + {own + 1:#x}]
+            jne p_own
+            subss xmm1, dword ptr [rsi + {acc:#x}]
+        p_own:
+            xorps xmm0, xmm0
+            maxss xmm1, xmm0
+            movss dword ptr [rdi + 24], xmm1
             inc ebx
             add rdi, {ENTRY}
         p_next:
@@ -499,6 +517,11 @@ def tick_code(s, g, eb, sh, va):
             cmp byte ptr [rsi + {dead:#x}], 0
             jne a_next
             mov qword ptr [r15 + {CUR_E}], rdx
+            mov cx, word ptr [rsi + {guid:#x}]
+            cmp cx, word ptr [rsi + {own + 1:#x}]
+            je a_ledger
+            mov dword ptr [rsi + {acc:#x}], 0
+        a_ledger:
             movzx eax, byte ptr [rdx + 5]
             mov ecx, eax
             shr ecx, 1
@@ -527,16 +550,15 @@ def tick_code(s, g, eb, sh, va):
             ucomiss xmm1, xmm0
             jbe a_move
             movss xmm2, dword ptr [rdx + 24]
-            ucomiss xmm2, xmm0
-            jbe a_kill
-            movss xmm0, dword ptr [rsi + {hp:#x}]
-            divss xmm0, xmm1
-            subss xmm0, xmm2
-            ucomiss xmm0, dword ptr [r15 + {K_EPS}]
+            subss xmm2, dword ptr [rsi + {acc:#x}]
+            ucomiss xmm2, dword ptr [r15 + {K_EPS}]
             jbe a_move
+            cmp dword ptr [r15 + {PEND_N}], {MAX}
+            jae a_move
+            movss xmm0, dword ptr [rdx + 24]
+            movss dword ptr [rsi + {acc:#x}], xmm0
             mulss xmm2, xmm1
-            movss xmm0, dword ptr [rsi + {hp:#x}]
-            subss xmm0, xmm2
+            movaps xmm0, xmm2
             call a_pend
             jmp a_move
         a_kill:
@@ -703,6 +725,7 @@ def tick_code(s, g, eb, sh, va):
             mov byte ptr [rax + {own:#x}], cl
             mov cx, word ptr [rax + {guid:#x}]
             mov word ptr [rax + {own + 1:#x}], cx
+            mov dword ptr [rax + {acc:#x}], 0
         s_next:
             inc ebx
             jmp s_entry

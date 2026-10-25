@@ -1,8 +1,8 @@
 {
   "format": 1,
-  "version": "2026.10.25.1-c809a06",
-  "tag": "v2026.10.25.1-c809a06",
-  "source_commit": "c809a0654eadc47c08a5367de7b65ec77603ec3d",
+  "version": "2026.10.25.2-8592e4c",
+  "tag": "v2026.10.25.2-8592e4c",
+  "source_commit": "8592e4c266bf6ee5d352951aec434d44c70f69b6",
   "server_migrations": [
     "https://azeroth-pvp.ync-erver.workers.dev"
   ],
@@ -15,8 +15,8 @@
   },
   "launcher": {
     "asset": "Azeroth.Launcher.exe",
-    "size": 25649219,
-    "sha256": "9ca4ae64d2668cdbacbb8f5d84f7d277b4001a465c8fbe82ff8ca73ae17e3b1d"
+    "size": 25646364,
+    "sha256": "cceac640b93259a0b2ff31ac35a6f6eb7e605de74e01ab208af0d559e24dffe9"
   },
   "mod": {
     "files": [
@@ -42,8 +42,8 @@
       },
       {
         "path": "docs/DEVELOPMENT.md",
-        "size": 19847,
-        "sha256": "92d1ca15a79ff513e1cba2b9e1095e51364cf467dce433f76ce8fb6820a2d01f"
+        "size": 19911,
+        "sha256": "46408db16f321b9b595bb386103518e58ec8469d9e96df8168e2e4af488c271e"
       },
       {
         "path": "lan_server.py",
@@ -92,13 +92,13 @@
       },
       {
         "path": "patches/coop_ghost.py",
-        "size": 123568,
-        "sha256": "1ae7e4e620029b9a3728fe3ffdec537d81de1b6c04f2836263f1ddce32958ba0"
+        "size": 124476,
+        "sha256": "0d7bfca5177b783990b00f86c371f7ea95de0f8e528c65f7b088bd3b1992a0ea"
       },
       {
         "path": "patches/coop_shared.py",
-        "size": 33179,
-        "sha256": "1de9ad89a28a9af164a01822d75b54e5205ccec1389f1843701b5d186c35b80f"
+        "size": 34554,
+        "sha256": "ba1fe41ff4b110000502e6110e714b3221760a063a660e42341e43fb16a99a31"
       },
       {
         "path": "patches/coop_spawns.py",
@@ -152,8 +152,8 @@
       },
       {
         "path": "pvp.py",
-        "size": 135850,
-        "sha256": "412728321feff9c8f8a2a3cc5a0cb87bdd0e963acd1de799b8904fb0ef2bc4f1"
+        "size": 136182,
+        "sha256": "591b19d8d9f22dbf456d33b664b3e1cc65f0f0280abbb3d57dba86dd24e1efa8"
       },
       {
         "path": "pvp_server.txt",
@@ -162,13 +162,13 @@
       },
       {
         "path": "README.md",
-        "size": 25195,
-        "sha256": "83c678f9543753dc0383f4cfd10109403a6007a861a1271bff5b8c693e36940a"
+        "size": 25807,
+        "sha256": "e23e756ac7fdb79c1bc280e7a393f5df3a27ce367dac3be4288e29f0df9dac3c"
       },
       {
         "path": "RELEASE.json",
         "size": 676,
-        "sha256": "201da57bde44462b09064041a4e78650c1728634d3afcfd93878f16aaa2defc9"
+        "sha256": "07b3432ead095bf73f2bcb67301bfce0d810bebec20faaa2d3d0d48eb530a4c8"
       },
       {
         "path": "requirements.txt",
@@ -183,7 +183,7 @@
       {
         "path": "VERSION",
         "size": 20,
-        "sha256": "3c116e7f38758cee00878e4bb0b4bec0b3401d6f65163f60cc227b47cad6cb6c"
+        "sha256": "4b152a8de410615303209ae358f421df4f8d52fc2db5c90a79db58b54b5849bb"
       }
     ]
   }

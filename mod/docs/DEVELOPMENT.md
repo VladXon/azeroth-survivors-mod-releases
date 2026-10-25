@@ -125,6 +125,7 @@ python -m pip install unicorn
 python tools/test_choice_native.py ..\AzerothSurvivors.exe
 python tools/test_choice_push.py ..\AzerothSurvivors.exe
 python tools/test_coop_choice_cast_native.py ..\AzerothSurvivors.exe -v
+python tools/test_coop_ledger_native.py ..\AzerothSurvivors.exe
 ```
 
 Тесты нового resolver используют искусственные PE-фикстуры и не требуют

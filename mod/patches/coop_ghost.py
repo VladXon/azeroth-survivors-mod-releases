@@ -52,18 +52,20 @@ Boss sync (find_boss_sync / hook_boss_chase, meta boss_sync = 1; needs the full 
 signatures bosses stay solo). "Bosses" here are the zone's timed bosses (the last one the final boss)
 and the lair guardians, told apart by two fields of the enemy record that enemy damage's death branch
 reads (boss / guardian, each -1 when the record isn't one).
-- Keys pair the two clients' bosses: a guardian is 0x10000 | lair << 8 | life (its lair's n-th
-  guardian; lairs come from the zone, not the run's RNG), a timed boss 0x20000 | n (n-th in the run,
-  on the shared run clock). Up to BOSS_SLOTS per client.
-- the exe publishes in the hits block, +HITS_BOSS: BOSS_SLOTS u64 {u32 key, f32 health fraction},
-  key 0 = empty, fraction 0 = dead or gone (kept until the slot is needed again), one store each.
+- Keys pair the two clients' bosses: a guardian is GUARDIAN_KEY | lair << 8 | life (its lair's n-th
+  guardian; lairs come from the zone, not the run's RNG), a timed boss BOSS_KEY | n (n-th in the run,
+  on the shared run clock). Up to BOSS_SLOTS per client. The keys carry LEDGER_KEY: games that add
+  damage never pair their bosses with ones that took the lower health.
+- the exe publishes in the hits block, +HITS_BOSS: BOSS_SLOTS u64 {u32 key, f32 own damage}: my own
+  damage to it so far as a fraction of its max health (what it lost minus what I dealt for the
+  partner), key 0 = empty, 1.0 = dead or gone (kept until the slot is needed again), one store each.
 - the companion writes the partner's into the ghost block, outside the seqlock: +3344 u32 on (the
   partner streams boss health), +3348 u32 count, +3352 BOSS_SLOTS u64 in the same format.
-- while live (playing, the ally shown and fresh, on): each tick every live boss whose fraction is
-  above the partner's for the same key by more than BOSS_EPS (or whose partner boss is dead) takes the
-  difference (health - partner fraction * its max health; health + max health to die) through enemy damage
-  as a secondary hit, like a replayed one, so the game's own death and rewards run; fractions only
-  go down, so the lower one wins on both screens. My hits on bosses aren't streamed (their health
+- while live (playing, the ally shown and fresh, on): each tick every live boss whose partner's own
+  damage grew by more than BOSS_EPS since what I dealt for it (BOSS_ACC) takes the growth times its max
+  health (health + max health to die when the partner's is dead or gone) through enemy damage as a
+  secondary hit, like a replayed one, so the game's own death and rewards run; damage adds up, so
+  two heroes on one boss kill it twice as fast. My hits on bosses aren't streamed (their health
   is), and the partner's replayed hits never land on a boss.
 - the enemy AI chases a cached copy of my hero's position; at each record's turn a boss nearer to
   the ally (from where it is heading) gets the ally's position instead, and what its turn queues
@@ -159,11 +161,13 @@ TMP, SNAP, MSG = 256, 512, 768
 # timed bosses seen (cleared together on a new run); the live verdict; the AI hook's turn state
 BOSS_GUIDS, BOSS_KEYS, BOSS_DMG, BOSS_LIVES, BOSS_COUNT, BOSS_RESET = 896, 960, 992, 1024, 1032, 140
 BOSS_LIVE, LURED, HERO_XY, HERO_Z, LURED_SLOTS = 1036, 1037, 1040, 1048, 1056  # 4 saved AI stack slots
-STATE_SIZE = 1088
+BOSS_ACC = 1088  # BOSS_SLOTS f32: the partner's damage already dealt to the boss in the slot
+STATE_SIZE = 1120
 BOSS_SLOTS = 8
 B_BOSS_ON, B_BOSS_N, B_BOSS = 3344, 3348, 3352
-BOSS_EPS = 0.001  # fractions closer than this are left alone (rounding, max health differences)
-GUARDIAN_KEY, BOSS_KEY = 0x10000, 0x20000
+BOSS_EPS = 0.001  # partner damage below this (fraction of max health) waits until it adds up
+LEDGER_KEY = 0x400000
+GUARDIAN_KEY, BOSS_KEY = LEDGER_KEY | 0x10000, LEDGER_KEY | 0x20000
 B_DPS, B_FLAGS, B_SPELL, B_SUMMON_COUNT, B_SUMMONS = 60, 64, 68, 164, 168
 B_ADJ, B_ADJ_SEQ, B_END, T_CLOCK, T_PHASE = 240, 244, 248, 3336, 3340
 COOP_LIVE, HOLD_START, START_NOW = 2, 4, 8
@@ -2043,6 +2047,9 @@ def patch(p):
             lea rdi, [r15 + {mine:#x}]
             mov ecx, {8 * BOSS_SLOTS}
             rep stosb
+            lea rdi, [r14 + {BOSS_ACC}]
+            mov ecx, {4 * BOSS_SLOTS}
+            rep stosb
         """
         bosses = "" if not boss else f"""
             mov byte ptr [r14 + {BOSS_LIVE}], 0
@@ -2085,7 +2092,7 @@ def patch(p):
         bs_free:
             cmp dword ptr [r14 + rcx * 4 + {BOSS_KEYS}], 0
             je bs_new
-            cmp dword ptr [r15 + rcx * 8 + {mine + 4:#x}], 0
+            cmp dword ptr [r15 + rcx * 8 + {mine + 4:#x}], 0x3f800000
             je bs_new
             inc ecx
             cmp ecx, {BOSS_SLOTS}
@@ -2093,6 +2100,7 @@ def patch(p):
             jmp bs_next
         bs_new:
             mov qword ptr [r14 + rcx * 8 + {BOSS_GUIDS}], rax
+            mov dword ptr [r14 + rcx * 4 + {BOSS_ACC}], 0
             cmp qword ptr [rsi + {boss['boss']:#x}], -1
             je bs_guard
             inc dword ptr [r14 + {BOSS_COUNT}]
@@ -2120,7 +2128,12 @@ def patch(p):
             divss xmm0, xmm1
             maxss xmm0, dword ptr [r15 + {consts + 60 - block:#x}]
             minss xmm0, dword ptr [r15 + {consts + 56 - block:#x}]
-            movd edx, xmm0
+            movss xmm3, dword ptr [r15 + {consts + 56 - block:#x}]
+            subss xmm3, xmm0
+            subss xmm3, dword ptr [r14 + rcx * 4 + {BOSS_ACC}]
+            xorps xmm2, xmm2
+            maxss xmm3, xmm2
+            movd edx, xmm3
             shl rdx, 32
             mov eax, dword ptr [r14 + rcx * 4 + {BOSS_KEYS}]
             or rax, rdx
@@ -2139,15 +2152,16 @@ def patch(p):
             cmp edx, eax
             jne bs_partner
             shr rdx, 32
-            jz bs_kill
             movd xmm1, edx
-            movaps xmm2, xmm0
-            subss xmm2, xmm1
+            ucomiss xmm1, dword ptr [r15 + {consts + 56 - block:#x}]
+            jae bs_kill
+            movaps xmm2, xmm1
+            subss xmm2, dword ptr [r14 + rcx * 4 + {BOSS_ACC}]
             ucomiss xmm2, dword ptr [r15 + {consts + 52 - block:#x}]
             jbe bs_next
-            mulss xmm1, dword ptr [rsi + {boss['max']:#x}]
-            movss xmm0, dword ptr [rsi + {full['hp']:#x}]
-            subss xmm0, xmm1
+            movss dword ptr [r14 + rcx * 4 + {BOSS_ACC}], xmm1
+            mulss xmm2, dword ptr [rsi + {boss['max']:#x}]
+            movaps xmm0, xmm2
             jmp bs_damage
         bs_kill:
             movss xmm0, dword ptr [rsi + {full['hp']:#x}]
@@ -2161,6 +2175,8 @@ def patch(p):
             bt r12d, ecx
             jc bs_gone_skip
             mov eax, dword ptr [r14 + rcx * 4 + {BOSS_KEYS}]
+            mov rdx, 0x3f80000000000000
+            or rax, rdx
             mov qword ptr [r15 + rcx * 8 + {mine:#x}], rax
             mov dword ptr [r14 + rcx * 4 + {BOSS_DMG}], 0
         bs_gone_skip:

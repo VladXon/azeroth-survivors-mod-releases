@@ -484,7 +484,8 @@ class Hits:
     (patches/coop_ghost.py, rva hits_rva in the feed json), read through the Feed's process handle:
     +8 u32 head (events written so far) | +12 u32 picks[2] (chests bought, guardians slain so far,
     never the picks the partner gave) | +24 RING x Ghost.EVENT | exes with boss_sync: then
-    Ghost.BOSS_SLOTS x Ghost.BOSS, my bosses (key 0: an empty slot, fraction 0: dead or gone)."""
+    Ghost.BOSS_SLOTS x Ghost.BOSS, my bosses with my own damage to each so far (fraction of its max health;
+    key 0: an empty slot, 1.0: dead or gone)."""
     RING, AT = 256, 24
     EVENT = Ghost.EVENT
     BOSS_AT = AT + RING * EVENT.size
@@ -497,7 +498,7 @@ class Hits:
 
     def read(self):
         """(new events as [spell, amount, crit, school, x, y, kind, type], picks, my bosses as (key,
-        fraction) or None without the boss sync) or None."""
+        own damage) or None without the boss sync) or None."""
         if self.feed.handle is None:
             return None
         raw = self._read(self.BOSS_AT + (Ghost.BOSS_SLOTS * Ghost.BOSS.size if self.boss else 0))
@@ -519,8 +520,8 @@ class Hits:
                             info >> 8 & 0xFF, info >> 16 & 0xFF])
         bosses = None
         if self.boss:
-            # a live boss never rounds to 0: that means dead
-            bosses = [[k, max(round(f, 5), 1e-5) if f > 0 else 0.0]
+            # a live boss never rounds to 1: that means dead or gone
+            bosses = [[k, 1.0 if f >= 1.0 else min(round(f, 5), 0.99999)]
                       for k, f in (Ghost.BOSS.unpack_from(raw, self.BOSS_AT + Ghost.BOSS.size * i)
                                    for i in range(Ghost.BOSS_SLOTS)) if k]
         return out, picks, boss_health(bosses)
@@ -536,7 +537,8 @@ class Hits:
 class SharedBlock:
     """The exe's shared enemies block "AZSENMY1" (patches/coop_shared.py, rva shared_rva), through the
     Ghost's process handle: my shared enemies (exe-written, seqlock) and the partner's side (mine to write).
-    Entries (id, template, flags, x, y, z, end of the move on the run clock, health fraction)."""
+    Entries (id, template, flags, x, y, z, end of the move on the run clock, own damage so far as a fraction
+    of max health: mine in my side, the partner's in its side; each exe deals what the partner's grew by)."""
     ENTRY = struct.Struct("<IBBxxfffff")
     MAX, MINE = 200, 32
     IN = MINE + MAX * ENTRY.size
@@ -585,21 +587,21 @@ class SharedBlock:
         return bool(ok) and done.value == len(data)
 
 
-# shared enemies (relay 3): the host's table `en` and the guest's lower health fractions `ef`, base64
+# shared enemies (relay 3): the host's table `en` and the guest's reports `ef`, base64; each side's own
+# damage to every enemy so far, so the damage of both heroes adds up
 SH_DEAD, SH_LURE, SH_NEW_SEG, SH_GONE = 1, 2, 4, 8  # the exe's partner-table flags (coop_shared.py)
 SH_LIVE, SH_GUEST, SH_SOLO = 16, 32, 64  # control bits
 SH_MIRROR = 0x800000  # the guest's mirrors: host id | this
 SH_BOSS = 0x1000000  # bosses and guardians in the exe's tables: this | boss-sync key
 EN_DEAD, EN_GUEST_OWNS, EN_BOSS = 1, 2, 4  # flags on the wire
 # en: sig, clock, base x, y, z | per enemy: id (24 bits), template, dx, dy, dz (1/4 yd from the base),
-# fraction (1/65535, 0 dead), flags, rest of its move (10 ms)
+# own damage (1/65535 of max health, rounded down: never more than dealt), flags, rest of its move (10 ms)
 EN_HEAD, EN_ENTRY = struct.Struct("<Iffff"), struct.Struct("<HBBhhhHBB")
-EF_HEAD, EF_ENTRY = struct.Struct("<I"), struct.Struct("<HBH")  # ef: sig | id, fraction (EF_GONE: vanished)
+EF_HEAD, EF_ENTRY = struct.Struct("<I"), struct.Struct("<HBH")  # ef: sig | id, own damage (0: killed, EF_GONE: vanished)
 EF_GONE = 0xFFFF
 CHOICE_EF_IDS = (0xFFFFFE, 0xFFFFFD, 0xFFFFFC)
 CHOICE_EF_MAGIC = 0xC501
 SH_HOLD, EN_HOLD = 16, 8  # hold the existing owner/mirror in place during a protected pick
-SHARED_EPS = 0.002  # fractions closer than this are equal (the exe's EPS)
 SHARED_STALE_S, SHARED_SOLO_S = 3.0, 10.0  # guest: the host's table this old -> own AI on them, then own spawner
 OWNER_SHARE, OWNER_YD = 0.85, 5.0  # an enemy changes hands when the other hero is this much nearer
 TOMB_S = 300.0  # guest: how long a mirror I killed (or lost) stays dead for the host's table
@@ -607,22 +609,21 @@ NEW_SEG_YD, NEW_SEG_S = 0.5, 0.1  # guest: a host move this different from the l
 
 
 def pack_en(sig, clock, base, entries):
-    """The host's table for the wire: entries (id, template, flags, x, y, z, end, fraction) relative to base."""
+    """The host's table for the wire: entries (id, template, flags, x, y, z, end, own damage) relative to base."""
     q = lambda v, b: max(-32768, min(32767, round((v - b) * 4)))
     out = EN_HEAD.pack(sig, clock, *base)
-    for eid, tpl, flags, x, y, z, end, frac in entries:
-        if not all(map(math.isfinite, (x, y, z, end, frac))):
+    for eid, tpl, flags, x, y, z, end, done in entries:
+        if not all(map(math.isfinite, (x, y, z, end, done))):
             continue  # a record the game hasn't filled yet
-        dead = flags & EN_DEAD or not frac > 0
         flags = (flags & (EN_DEAD | EN_GUEST_OWNS | EN_HOLD)) | (EN_BOSS if eid & SH_BOSS else 0)
         out += EN_ENTRY.pack(eid & 0xFFFF, eid >> 16 & 0x7F, tpl, q(x, base[0]), q(y, base[1]), q(z, base[2]),
-                             0 if dead else max(1, min(65535, math.ceil(frac * 65535))),
-                             flags | (EN_DEAD if dead else 0), max(0, min(255, round((end - clock) * 100))))
+                             max(0, min(65535, math.floor(done * 65535))), flags,
+                             max(0, min(255, round((end - clock) * 100))))
     return base64.b64encode(out).decode()
 
 
 def unpack_en(text, sig):
-    """(clock, {id: (template, flags, x, y, z, end, fraction)}) of a host's table (bosses: SH_BOSS | key),
+    """(clock, {id: (template, flags, x, y, z, end, own damage)}) of a host's table (bosses: SH_BOSS | key),
     None when it isn't one (another game build's templates, junk)."""
     try:
         raw = base64.b64decode(text, validate=True)
@@ -641,14 +642,14 @@ def unpack_en(text, sig):
 
 
 def pack_ef(sig, reports):
-    """The guest's reports for the wire: (host id, fraction, or None: it vanished)."""
+    """The guest's reports for the wire: (host id, own damage, 0: I killed it, None: it vanished)."""
     return base64.b64encode(EF_HEAD.pack(sig) + b"".join(
         EF_ENTRY.pack(i & 0xFFFF, i >> 16 & 0x7F, EF_GONE if f is None else 0 if not f > 0 else max(1, min(65534, math.floor(f * 65535))))
         for i, f in reports)).decode()
 
 
 def unpack_ef(text, sig):
-    """{host id: fraction, or None: vanished} of a guest's reports, None when it isn't one."""
+    """{host id: own damage, 0: killed, None: vanished} of a guest's reports, None when it isn't one."""
     try:
         raw = base64.b64decode(text, validate=True)
         hsig, = EF_HEAD.unpack_from(raw)
@@ -737,7 +738,7 @@ def guest_bits(age):
 
 class SharedSync:
     """One shared set of enemies for both games (coop_shared.py): the host's table goes to the guest, the
-    guest's lower health fractions come back. The host's companion decides who runs each enemy; the guest's
+    guest's own damage to each enemy comes back (each exe deals what the other's grew by: damage adds up). The host's companion decides who runs each enemy; the guest's
     keeps the ones it killed or lost dead (tombstones) until the host's table agrees. The GhostLink feeds it."""
 
     def __init__(self, block, sig, host):
@@ -767,15 +768,16 @@ class SharedSync:
         return {"ef": pack_ef(self.sig, self.guest_reports(entries, now))}
 
     def guest_reports(self, entries, now):
-        """My mirrors whose health is below the host's (0: I killed it) and the ones of mine that vanished
-        (an explosion at my hero); tombstones keep both dead until the host's table agrees."""
+        """My own damage to each mirror so far (the host deals what it grew by), the ones I killed (0) and the
+        ones of mine that vanished (an explosion at my hero); tombstones keep both dead until the host's
+        table agrees."""
         mirrors = {e[0] & (SH_MIRROR - 1): e for e in entries if e[0] & SH_MIRROR}
         reports = []
         for hid, e in mirrors.items():
             host = self.table.get(hid)
             if e[2] & SH_DEAD:
                 self.tomb.setdefault(hid, ("dead", now))
-            elif host and not host[1] & EN_DEAD and e[7] < host[6] - SHARED_EPS:
+            elif host and not host[1] & EN_DEAD and e[7] >= 1 / 65535:  # less rounds to nothing on the wire
                 reports.append((hid, e[7]))
         for hid in self.alive - mirrors.keys():
             host = self.table.get(hid)
@@ -840,7 +842,7 @@ class SharedSync:
         return out, written
 
     def host_table(self, guest_xy):
-        """Owners (the nearer hero, with hysteresis; bosses and guardians too) and the guest's reports for my exe."""
+        """Owners (the nearer hero, with hysteresis; bosses and guardians too) and the guest's own damage for my exe."""
         if self.mine is None:
             return []
         _, hero, entries = self.mine
@@ -862,11 +864,11 @@ class SharedSync:
                                   boss=bool(eid & SH_BOSS))
             held = target == 2
             owners[eid] = base_owner if held else target
-            fl, frac = (SH_LURE if owners[eid] else 0) | (SH_HOLD if held else 0), 1.0
+            fl, done = (SH_LURE if owners[eid] else 0) | (SH_HOLD if held else 0), 0.0
             if eid in self.reports:
                 report = self.reports[eid]
-                fl, frac = (fl | SH_GONE, 1.0) if report is None else (fl | (SH_DEAD if report <= 0 else 0), report)
-            out.append((eid, tpl, fl, x, y, z, end, frac))
+                fl, done = (fl | SH_GONE, 0.0) if report is None else (fl | (SH_DEAD if report <= 0 else 0), max(0.0, report))
+            out.append((eid, tpl, fl, x, y, z, end, done))
         self.owners = owners
         return out
 
