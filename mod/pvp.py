@@ -45,6 +45,8 @@ FRAME_MAX = 8000  # bytes; the relay (server/) refuses frames over 8192 (relay 3
 GHOST_STALE_S = 3  # the ghost hides when the partner sent nothing for this long
 PLAYOUT_S = 0.2  # the partner is shown at most this far behind its newest frame (the jitter buffer's ceiling)
 PLAYOUT_MIN_S = 0.05  # ...and at least this far: on a LAN two sample intervals and the jitter are less
+EXTRAPOLATE_S = 0.15  # a late frame: the partner walks on along its last velocity this long, then stops
+PING_EVERY_S = 2.0  # a WebSocket ping to the relay (the server or a LAN hub) for the connection's round trip
 OFFSET_CREEP = 0.002  # s per partner sample (~20 ms a second): how fast the jitter buffer follows a slower network
 DEAD_SHOW_S = 4  # a dead partner stays visible (flag dead) this long, then the ghost hides
 IN_RUN = ("playing", "choosing", "paused")
@@ -73,12 +75,7 @@ USER_AGENT = "AzerothSurvivorsMod/1.0"
 POLL_S = 2.5
 AUTH_ERROR = "Сервер не принял прежний сетевой токен. Зарегистрируй ник заново; сохранения игры сохраняются."
 
-ZONE_NAMES = {
-    "elwynn": "Элвиннский лес", "duskwood": "Сумеречный лес", "wsg": "Ущелье Песни Войны",
-    "ungoro": "Кратер Ун'Горо", "ab": "Низина Арати", "feralas": "Фералас", "arena": "Арена Гурубаши",
-    "sm": "Монастырь Алого ордена", "av": "Альтеракская долина", "brm": "Черная гора",
-    "aq": "Врата Ан'Киража", "naxx": "Наксрамас",
-}
+ZONE_NAMES = save.ZONE_NAMES
 STATUS_NAMES = {
     "waiting": "ещё не начал", "running": "играет", "paused": "пауза", "died": "погиб",
     "finished": "прошёл зону", "timeout": "время вышло", "forfeit": "не стартовал", "left": "вышел",
@@ -1112,6 +1109,9 @@ class GhostLink:
         self.choice_state_cache = None
         self.events = []  # the partner's hits waiting for the ghost's ring
         self.unsent_ev = []  # my hits read from the exe and not yet in a frame sent
+        self.arrivals = deque(maxlen=128)  # when the partner's position frames came (frames a second)
+        self.ping_ms, self.ping_at = None, 0.0  # round trip to the relay (WebSocket ping), when the last ping went
+        self.pings = deque(maxlen=8)  # the last round trips: a pong waits up to a step for the drain, the least is the network's
         self.partner_picks = None  # the partner's last pick counts
         self.grants = [0, 0]  # chest and guardian picks the partner gave me so far, for the ghost block
         self.bosses = None  # the partner's bosses [(key, health fraction)], None when it doesn't stream them
@@ -1163,10 +1163,12 @@ class GhostLink:
                              time.monotonic() - self.partner_at)
                 self.ghost.write(self.ally() if visible else None, self.control(), self.lang, self.grants,
                                  (*self.adjust, self.partner_end), self.bosses)
-                self.ghost.push_events(self.events if visible else [])
+                # a full ring takes some: the rest wait for the next step (the exe plays 16 a tick)
+                self.events = self.events[self.ghost.push_events(self.events):] if visible else []
                 if self.shared:
                     self.shared.write_exe(time.monotonic(), self.partner, self.partner_live())
-            self.events = []
+            else:
+                self.events = []
             if self.offline and not self.defeat:
                 break  # session over and nothing left to finish
             next_at = max(next_at + 1 / self.hz, time.monotonic())
@@ -1215,7 +1217,8 @@ class GhostLink:
         gap = host_t + (now - self.partner_at) - mine[0]
         self.gap_max = max(self.gap_max, abs(gap))
         if now - self.gap_logged >= 60:
-            log.info("relay %s: run clock within %.2f s of the host's over the last minute", self.match_id, self.gap_max)
+            log.info("relay %s: run clock within %.2f s of the host's over the last minute; link %s", self.match_id,
+                     self.gap_max, self.net_stats())
             self.gap_max, self.gap_logged = 0.0, now
         step = clock_step(gap)
         if not step:
@@ -1290,11 +1293,22 @@ class GhostLink:
             self.last_sent_at = now
             self.unsent_ev = []
             self.send_static()
+        if now - self.ping_at >= PING_EVERY_S:
+            self.ping_at = now
+            self.ws.ping(struct.pack("<d", now))
         while True:  # drain everything the partner sent since the last step
             try:
-                message = json.loads(self.ws.recv())
+                opcode, data = self.ws.recv_data(control_frame=True)
             except websocket.WebSocketTimeoutException:
                 break
+            if opcode == websocket.ABNF.OPCODE_PONG:
+                if len(data) == 8:
+                    self.pings.append((time.monotonic() - struct.unpack("<d", data)[0]) * 1000)
+                    self.ping_ms = min(self.pings)
+                continue
+            if opcode not in (websocket.ABNF.OPCODE_TEXT, websocket.ABNF.OPCODE_BINARY):
+                continue
+            message = json.loads(data)
             if message.get("kind") == "static":
                 self.partner_static = message
             else:
@@ -1312,6 +1326,7 @@ class GhostLink:
                 message = {**message, "ef": clean_ef}
         self.partner = message
         self.partner_at = time.monotonic()
+        self.arrivals.append(self.partner_at)
         self.reconnect_failures = 0
         self.add_sample(message)
         if self.shared:
@@ -1412,6 +1427,15 @@ class GhostLink:
         self.offset = now - key if self.offset is None else min(now - key, self.offset + OFFSET_CREEP)
         self.jitter += (now - key - self.offset - self.jitter) / 16
 
+    def net_stats(self):
+        """The link's quality for the window: round trip to the relay, the partner's frames a second over
+        the last 2 s, their jitter and how far behind the partner is shown (ms; None: not measured yet)."""
+        now = time.monotonic()
+        fresh = sum(1 for at in self.arrivals if now - at <= 2)
+        return {"ping": None if self.ping_ms is None else round(self.ping_ms), "fps": round(fresh / 2),
+                "jitter": round(self.jitter * 1000) if self.trail else None,
+                "delay": round(self.playout_delay() * 1000) if self.trail else None}
+
     def playout_delay(self):
         """How far behind its newest sample the partner is shown: two sample intervals (one lost or late
         frame still finds a next one to slide to) and three times the mean lateness, within
@@ -1431,6 +1455,11 @@ class GhostLink:
                     return b  # the feed stalled (a load, a teleport): snap, don't slide across the map
                 k = (t - t0) / (t1 - t0)
                 return {**b, **{c: a[c] + (b[c] - a[c]) * k for c in ("x", "y", "z")}}
+        (t0, _, a), (t1, _, b) = samples[-2] if len(samples) > 1 else samples[-1], samples[-1]
+        if t >= t1 and 0 < t1 - t0 < 1 and b.get("phase") in IN_RUN:
+            # the next frame is late: dead reckoning along the last move, capped (a turn overshoots a little)
+            k = min(t - t1, EXTRAPOLATE_S) / (t1 - t0)
+            return {**b, **{c: b[c] + (b[c] - a[c]) * k for c in ("x", "y", "z")}}
         return samples[0][2] if t < samples[0][0] else samples[-1][2]
 
     def ally(self):
@@ -2494,10 +2523,10 @@ class Online:
             target = self.coop_target
             both = min((target or {}).get("zones") or 1, s.zones or 1, len(names))
             out.update(view="lobby", nick=(me or {}).get("nick", s.nick()), rating=(me or {}).get("rating"),
-                       feed=bool(s.feed), target=target, zones=names, zone=both - 1,
+                       feed=bool(s.feed), target=target, zones=names, zone=both - 1, both=both, lan=SERVER != OFFICIAL,
                        suggestions={"q": q, "players": [p for p in found if not target or p["nick"] != target.get("nick")]})
             return out
-        out.update(view="match", lines=[], buttons=[], show_invites=False)
+        out.update(view="match", lines=[], buttons=[], party=[], net=None, show_invites=False)
         self.match_view(match, out)
         return out
 
@@ -2520,8 +2549,10 @@ class Online:
         me = s.side_of(m)
         my_status = me.get("status")
         link = s.link or s.ending
-        line(f"{'Кооп' if coop else 'PvP'}: {ZONE_NAMES.get(m['zone'], m['zone'])}", "title")
-        line(f"Сложность: {preset_text(match_preset(m))}", "muted")
+        out.update(title=f"{'Кооп' if coop else 'PvP'}: {ZONE_NAMES.get(m['zone'], m['zone'])}",
+                   subtitle=f"Сложность: {preset_text(match_preset(m))}", coop=coop, lan=bool(m.get("lan")))
+        if coop and link and not link.offline:
+            out["net"] = link.net_stats()
         if coop and link and link.waiting_for_host() and my_status == "waiting":
             line(f"Ждём хоста: забег начнёт {m['players'][0]['nick']}, твой стартует вместе с ним. Зайди в зону и жди", "warn")
         elif m["state"] == "starting" and m.get("startDeadline"):
@@ -2529,20 +2560,17 @@ class Online:
                  f"{fmt_ms(m['startDeadline'] - m['serverNow'])}", "warn")
         if not coop:
             line("Фраги считаются до прихода финального босса", "muted")
-        for p in m["players"]:
-            mine = s.me and p["nick"].lower() == s.me["nick"].lower()
-            if coop:
-                live = p.get("live") or {}
-                phase = PHASE_NAMES.get(live.get("ph"), STATUS_NAMES.get(p["status"], p["status"]))
-                if p["status"] not in ("running", "paused"):
-                    phase = STATUS_NAMES.get(p["status"], p["status"])
-                line(f"{p['nick']}{' (ты)' if mine else ''}: уровень {int(live.get('lvl') or 1)}, "
-                     f"{live.get('kills', p['kills'])} фрагов", "strong")
-                line(f"{phase}, здоровье {int(live.get('hp') or 0)} / {int(live.get('hpm') or 0)}", "muted")
-            else:
-                line(f"{p['nick']}{' (ты)' if mine else ''}: {p['kills']} фрагов", "strong")
-                line(f"{STATUS_NAMES.get(p['status'], p['status'])}, время {fmt_ms(p['elapsedMs'])} из 40:00, "
-                     f"пауза {fmt_ms(p['pauseLeftMs'])}", "muted")
+        for p in m["players"]:  # the window draws each player as a card
+            mine = bool(s.me and p["nick"].lower() == s.me["nick"].lower())
+            live = p.get("live") or {} if coop else {}
+            phase = STATUS_NAMES.get(p["status"], p["status"])
+            if coop and p["status"] in ("running", "paused"):
+                phase = PHASE_NAMES.get(live.get("ph"), phase)
+            out["party"].append({
+                "nick": p["nick"], "me": mine, "kills": live.get("kills", p["kills"]), "phase": phase,
+                "over": p["status"] in RUN_OVER, "lvl": int(live.get("lvl") or 1) if coop else None,
+                "hp": int(live.get("hp") or 0), "hpm": int(live.get("hpm") or 0),
+                "detail": None if coop else f"время {fmt_ms(p['elapsedMs'])} из 40:00, пауза {fmt_ms(p['pauseLeftMs'])}"})
         if coop:
             if link and link.defeat_manual:
                 line("Напарник погиб: забег окончен. Эта сборка игры не завершает его сама, выйди из забега", "err")

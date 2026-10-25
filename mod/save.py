@@ -102,6 +102,12 @@ def share_talent_xp(text):
 
 
 ZONES = ["elwynn", "duskwood", "wsg", "ungoro", "ab", "feralas", "arena", "sm", "av", "brm", "aq", "naxx"]
+ZONE_NAMES = {
+    "elwynn": "Элвиннский лес", "duskwood": "Сумеречный лес", "wsg": "Ущелье Песни Войны",
+    "ungoro": "Кратер Ун'Горо", "ab": "Низина Арати", "feralas": "Фералас", "arena": "Арена Гурубаши",
+    "sm": "Монастырь Алого ордена", "av": "Альтеракская долина", "brm": "Черная гора",
+    "aq": "Врата Ан'Киража", "naxx": "Наксрамас",
+}
 
 
 def _zone_field(l):
@@ -115,6 +121,19 @@ def opened_count(lines):
     opened = [ZONES.index(field(l)) + 1 for l in lines if l.startswith("open|") and field(l) in ZONES]
     opened += [ZONES.index(z) + 2 for l in lines if l.startswith("beat|") for z in field(l).split(",") if z in ZONES]
     return min(max(opened, default=0), len(ZONES))
+
+
+def profile_summary(text):
+    """What the launcher's solo screen shows of a save: the picked hero, the zones beaten and opened, totals."""
+    lines = text.split("\n")
+    pick = next((l.split("|") for l in lines if l.startswith("pick|")), [])
+    stat = dict(kv.partition("=")[::2] for l in lines if l.startswith("stat|") for kv in l[5:].split(","))
+    beaten = {z for l in lines if l.startswith("beat|") for z in _zone_field(l).split(",")}
+    return {"hero": {"class": _int(pick[1]), "race": _int(pick[2]), "name": pick[5]} if len(pick) > 5 else None,
+            "zone": pick[4] if len(pick) > 4 and pick[4] in ZONES else None,
+            "opened": opened_count(lines), "beaten": [z for z in ZONES if z in beaten],
+            "stats": {k: _int(stat.get(k)) or 0 for k in ("kills", "runs", "wins", "bosses")},
+            "talent_xp": max((xp for _, xp in talent_xp(lines).values()), default=0)}
 
 
 def share_zones(text):

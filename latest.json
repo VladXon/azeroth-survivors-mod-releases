@@ -1,8 +1,8 @@
 {
   "format": 1,
-  "version": "2026.10.24.2-a5f3e25",
-  "tag": "v2026.10.24.2-a5f3e25",
-  "source_commit": "a5f3e250afcf59db9afdf94cc6863b3657cadf33",
+  "version": "2026.10.25.1-c809a06",
+  "tag": "v2026.10.25.1-c809a06",
+  "source_commit": "c809a0654eadc47c08a5367de7b65ec77603ec3d",
   "server_migrations": [
     "https://azeroth-pvp.ync-erver.workers.dev"
   ],
@@ -15,8 +15,8 @@
   },
   "launcher": {
     "asset": "Azeroth.Launcher.exe",
-    "size": 25671124,
-    "sha256": "6c320a74314b431c5b96d20b950f247ba72d3f37a4fdda3ddf4ecad6dc64633d"
+    "size": 25649219,
+    "sha256": "9ca4ae64d2668cdbacbb8f5d84f7d277b4001a465c8fbe82ff8ca73ae17e3b1d"
   },
   "mod": {
     "files": [
@@ -152,8 +152,8 @@
       },
       {
         "path": "pvp.py",
-        "size": 133925,
-        "sha256": "ae54711ef957b4e8d13d9d311d7d09ff0c5027fb985ab6c689a08485b1a1cbdd"
+        "size": 135850,
+        "sha256": "412728321feff9c8f8a2a3cc5a0cb87bdd0e963acd1de799b8904fb0ef2bc4f1"
       },
       {
         "path": "pvp_server.txt",
@@ -162,13 +162,13 @@
       },
       {
         "path": "README.md",
-        "size": 24494,
-        "sha256": "a75aefe6094ee35b95e1ab9f6efc47a9c7f048095431b0c8bd4346bf18ae01a2"
+        "size": 25195,
+        "sha256": "83c678f9543753dc0383f4cfd10109403a6007a861a1271bff5b8c693e36940a"
       },
       {
         "path": "RELEASE.json",
         "size": 676,
-        "sha256": "cbd790ece6b22444906d5aff4533a11147a165d329af17cfed3941624de49173"
+        "sha256": "201da57bde44462b09064041a4e78650c1728634d3afcfd93878f16aaa2defc9"
       },
       {
         "path": "requirements.txt",
@@ -177,13 +177,13 @@
       },
       {
         "path": "save.py",
-        "size": 11742,
-        "sha256": "fca0866348a29608a7d3cb685aa6616f1ec11b489dbdb3af582bda7f3b02b1f8"
+        "size": 13150,
+        "sha256": "ea0f87fa68c19dd8e0118db7e733b11a06c385904141c6b2dc61d0ec4cfa1e9b"
       },
       {
         "path": "VERSION",
         "size": 20,
-        "sha256": "4f5afdbeb5d5c0956b61ad5cb9081af0cb7581053d2a5568084bd13d01af3dc3"
+        "sha256": "3c116e7f38758cee00878e4bb0b4bec0b3401d6f65163f60cc227b47cad6cb6c"
       }
     ]
   }
