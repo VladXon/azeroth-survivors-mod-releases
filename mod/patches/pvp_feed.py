@@ -1,8 +1,8 @@
 """Live run feed for the PvP companion.
 
 Every AZS addon line the game's local server sends to the UI goes through one
-builder (prefix, body). Its entry is hooked: for AZSRUN, AZSEND and AZSZONE the
-body is copied into a fixed block in .moddata that the companion reads with
+builder (prefix, body). Its entry is hooked: for AZSRUN, AZSEND, AZSZONE and AZSPETS
+(my summons: id,entry,key,kind,ends,dur,icon,name;...) the body is copied into a fixed block in .moddata that the companion reads with
 ReadProcessMemory (module base + rva from AzerothSurvivors-52.feed.json).
 
 Layout: "AZSFEED1", then one 1024-byte slot per prefix in this order:
@@ -11,7 +11,7 @@ write is in progress; a reader retries on an odd or changed seq.
 """
 import re
 
-SLOTS = ["AZSRUN", "AZSEND", "AZSZONE"]
+SLOTS = ["AZSRUN", "AZSEND", "AZSZONE", "AZSPETS"]
 SLOT = 1024
 BODY = SLOT - 8
 MAGIC = b"AZSFEED1"
@@ -70,8 +70,18 @@ def patch(p):
         try7:
             cmp r9, 7
             jne done
-            cmp dword ptr [r8], 0x5a535a41
+            mov eax, dword ptr [r8]
+            cmp eax, 0x5a535a41
+            je try_zone
+            cmp eax, 0x50535a41
             jne done
+            cmp word ptr [r8 + 4], 0x5445
+            jne done
+            cmp byte ptr [r8 + 6], 0x53
+            jne done
+            add r11, {3 * SLOT}
+            jmp copy
+        try_zone:
             cmp word ptr [r8 + 4], 0x4e4f
             jne done
             cmp byte ptr [r8 + 6], 0x45

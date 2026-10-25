@@ -40,6 +40,8 @@ SEND_SLACK = 0.8  # relay 4: a frame may leave this share of the step after the 
 RELAY3_HZ = 18  # relay 3 drops frames under 50 ms apart: 55 ms steps leave room for the loop's and the network's jitter
 # (20 Hz steps against a 50 ms send gap skipped every other frame: 10-13 frames a second went out)
 UNSENT_EV_MAX = 256  # hits held for the next frame sent (a skipped send no longer loses them)
+SHARED_EVERY_S = 1 / 30  # the shared enemies' table (~4 KB) rides every frame up to this rate: a 60 Hz LAN link
+# sends positions, hits and bosses every tick but halves its bytes (the table holds moves, not positions)
 GHOST_CONNECT_GRACE_S = 15  # allow the partner to launch/join before probing a quiet socket
 FRAME_MAX = 8000  # bytes; the relay (server/) refuses frames over 8192 (relay 3; 4096 before)
 GHOST_STALE_S = 3  # the ghost hides when the partner sent nothing for this long
@@ -209,13 +211,16 @@ def find_game():
 
 
 class Feed:
-    """Latest AZSRUN / AZSEND / AZSZONE lines from the game, parsed into dicts."""
+    """Latest AZSRUN / AZSEND / AZSZONE lines from the game, parsed into dicts (AZSPETS, my summons, into
+    a list of dicts), as many slots as the exe's feed has (the json's `slots`)."""
     SLOTS = ["AZSRUN", "AZSEND", "AZSZONE"]
     SLOT_SIZE = 1024
+    LISTS = {"AZSPETS": ("id", "entry", "key", "kind", "ends", "dur", "icon", "name")}
 
     def __init__(self):
         info = json.loads(FEED_INFO.read_text())
         self.rva = info["rva"]
+        self.SLOTS = info.get("slots") or self.SLOTS
         self.handle = None
         self.pid = None
         self.base = None
@@ -250,7 +255,8 @@ class Feed:
                     stable = False
                     break
                 body = raw[16 + i * self.SLOT_SIZE:16 + i * self.SLOT_SIZE + min(length, 1016)]
-                out[prefix] = (seq, parse_fields(body.decode("utf-8", "replace")))
+                text = body.decode("utf-8", "replace")
+                out[prefix] = (seq, parse_list(text, self.LISTS[prefix]) if prefix in self.LISTS else parse_fields(text))
             if stable:
                 return out
         return None
@@ -260,6 +266,30 @@ class Feed:
         got = ctypes.c_size_t()
         ok = k32.ReadProcessMemory(self.handle, ctypes.c_void_p(self.base + self.rva), buf, size, ctypes.byref(got))
         return buf.raw if ok and got.value == size else None
+
+
+def parse_list(body, names):
+    """'a,b;a,b' as the game's AZS_List does: entries by ';', fields by ',', named."""
+    return [dict(zip(names, entry.split(","))) for entry in body.split(";") if entry]
+
+
+# my summons for the partner's ally (coop_ghost: kind -> a display, at most 4 following it): the game's
+# key or kind -> kind; totems and unknown ones stay home (no display fits them)
+SUMMON_KINDS = {"imp": 1, "voidwalker": 2, "succubus": 3, "felhunter": 4, "infernal": 5, "doomguard": 6,
+                "mini_doomguard": 6, "pitlord": 6, "felguard": 7, "pet": 8, "spirit_wolf": 8,
+                "water_elemental": 8, "treant": 8}
+SUMMON_SPOTS = ((-2.0, 1.5), (-2.0, -1.5), (-3.5, 0.0), (1.5, 2.5))  # yd from the ally, in formation
+
+
+def summons(pets):
+    """The AZSPETS list as the frame's summons: [{kind, dx, dy}], at most 4."""
+    out = []
+    for pet in pets if isinstance(pets, list) else []:
+        kind = SUMMON_KINDS.get(str(pet.get("key", "")).lower()) or SUMMON_KINDS.get(str(pet.get("kind", "")).lower())
+        if kind and len(out) < len(SUMMON_SPOTS):
+            dx, dy = SUMMON_SPOTS[len(out)]
+            out.append({"kind": kind, "dx": dx, "dy": dy})
+    return out
 
 
 def parse_fields(body):
@@ -994,7 +1024,8 @@ def local_hero(game, dps=0.0, nopause=False):
     paused = phase in ("paused", "choosing") and not nopause
     flags = (1 if dps > 0 else 0) | (2 if phase == "dead" else 0) | (4 if paused else 0)
     return {"x": coord("px"), "y": coord("py"), "z": coord("pz"), "facing": coord("pf"), "phase": phase,
-            "lvl": int(coord("lvl")), "dps": round(dps, 1), "flags": flags, "summons": [],
+            "lvl": int(coord("lvl")), "dps": round(dps, 1), "flags": flags,
+            "summons": summons((game or {}).get("AZSPETS", (0, []))[1]) if phase in IN_RUN else [],
             "hp": max(0, round(coord("hp"))), "hpm": max(0, round(coord("hpm")))}
 
 
@@ -1103,6 +1134,7 @@ class GhostLink:
         self.jitter = PLAYOUT_S / 3  # mean lateness of a sample against the least delayed one (s)
         self.run_seq, self.run_seen = None, 0.0  # my AZSRUN sample and when I first saw it
         self.tick_clock, self.tick_seen = None, 0.0  # the exe's last tick (its run clock) and when I first saw it
+        self.table_at = 0.0  # when the shared enemies' table last rode a frame
         self.visible = False
         self.dead_since = None  # when the partner's phase became dead
         self.meter = DpsMeter()
@@ -1297,8 +1329,11 @@ class GhostLink:
             if mine[2] is not None:
                 frame["bh"] = [list(b) for b in mine[2]]
         if self.shared:
-            frame.update(self.shared.outgoing(time.monotonic()))
+            table = self.shared.outgoing(time.monotonic())
             self.tick_hero(frame)
+            if time.monotonic() - self.table_at >= SHARED_EVERY_S:
+                frame.update(table)
+                self.table_at = time.monotonic()
         self.attach_choice_frame(frame)
         text = json.dumps(frame, separators=(",", ":"))
         while len(text) > FRAME_MAX and frame.get("ev"):  # the relay closes the socket on bigger frames

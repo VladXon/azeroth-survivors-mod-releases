@@ -1,6 +1,6 @@
 {
-  "release_version": "2026.10.25.3-69a7b3d",
-  "source_commit": "69a7b3d86253d2f99da485a11db63f14517a82ad",
+  "release_version": "2026.10.25.4-de99f4f",
+  "source_commit": "de99f4f3ed4e6126f597c8eab0134fcc8605c7e5",
   "python_bundled": "in Azeroth Launcher.exe",
   "platform": "Windows x64",
   "updater_format": "launcher manifest 1",

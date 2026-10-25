@@ -1,8 +1,8 @@
 {
   "format": 1,
-  "version": "2026.10.25.3-69a7b3d",
-  "tag": "v2026.10.25.3-69a7b3d",
-  "source_commit": "69a7b3d86253d2f99da485a11db63f14517a82ad",
+  "version": "2026.10.25.4-de99f4f",
+  "tag": "v2026.10.25.4-de99f4f",
+  "source_commit": "de99f4f3ed4e6126f597c8eab0134fcc8605c7e5",
   "server_migrations": [
     "https://azeroth-pvp.ync-erver.workers.dev"
   ],
@@ -15,8 +15,8 @@
   },
   "launcher": {
     "asset": "Azeroth.Launcher.exe",
-    "size": 25650699,
-    "sha256": "4877ca016459f2e6739c3d683005317fe4ed6d956316350ce15ef6432751df25"
+    "size": 25651378,
+    "sha256": "1d139ece7300a0a5e84dcade1c02f380ba4b65e380d30d0515f325edf9153003"
   },
   "mod": {
     "files": [
@@ -42,8 +42,8 @@
       },
       {
         "path": "docs/DEVELOPMENT.md",
-        "size": 19911,
-        "sha256": "46408db16f321b9b595bb386103518e58ec8469d9e96df8168e2e4af488c271e"
+        "size": 19968,
+        "sha256": "519a8ab3fc287a961158fbfba5c1fe2195b4cf51aba369a2966da4fe6b049d76"
       },
       {
         "path": "lan_server.py",
@@ -137,8 +137,8 @@
       },
       {
         "path": "patches/pvp_feed.py",
-        "size": 4796,
-        "sha256": "3fdb4b1caa18ba750ba06aef97040b89110ae0cdb1412958b1b178cbf8ace317"
+        "size": 5147,
+        "sha256": "81e7a7961ecd684a9074c0e73a03785de25da5cbd338768e34c7cdfc9a8092a9"
       },
       {
         "path": "patches/quest.lua",
@@ -152,8 +152,8 @@
       },
       {
         "path": "pvp.py",
-        "size": 139304,
-        "sha256": "78730d7761be880a2750845219a772b24164a72b2feb7dff83c0e54f033e37fa"
+        "size": 141372,
+        "sha256": "ad96a1620f45369327c04500faadb6bd999dbc836fd4f1a8e622e1054eccf4e7"
       },
       {
         "path": "pvp_server.txt",
@@ -162,13 +162,13 @@
       },
       {
         "path": "README.md",
-        "size": 26614,
-        "sha256": "ab3fffbfad6850e44c5b8095ef0b8918a57e7e0c391c6a7e74d23a2d19cd7b37"
+        "size": 27153,
+        "sha256": "c5229aad8065f4a5f049fda7c42ba4d72c22b4762fd1cdcbc66935fccfa41b1e"
       },
       {
         "path": "RELEASE.json",
         "size": 676,
-        "sha256": "e4471590d8a7e930eac18ed267c8190fe96684fc79f6b1003fce6975fff7ef2c"
+        "sha256": "031cef302e90df3ca79a5c57e7911f085dbd0d593fa5a2982b7f9e62d0667291"
       },
       {
         "path": "requirements.txt",
@@ -183,7 +183,7 @@
       {
         "path": "VERSION",
         "size": 20,
-        "sha256": "83865a8b1346972ebca2800773148e19f69e5c88ff7d3c80d0ccde4d4c0bfc49"
+        "sha256": "6a6a3be8397e97a17c5537854040b3b69c15d2cd5706740eaacab81d8630820b"
       }
     ]
   }
