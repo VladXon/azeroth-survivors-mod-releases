@@ -120,7 +120,8 @@ SPEEDS = (2.5, 7.0, 4.5, 4.7222223, 2.5, 3.1415927)  # walk, run, back, swim, sw
 # player models by race id (1.12): male, female
 DISPLAYS = [0, 0, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 1563, 1564, 1478, 1479]
 DEFAULT_DISPLAY = 51
-MIN_INTERVAL = 0.08  # s of run clock between moves
+MIN_INTERVAL = 0.008  # s of run clock between moves
+MOVE_MIN_MS = 8.0  # ms: keep short ghost splines close to the sender update cadence
 TIMEOUT = 3.0  # s of run clock without a companion update: despawn
 VISIBLE_ITEM = 0x104  # PLAYER_VISIBLE_ITEM_1_0, 12 fields per slot
 SLOTS = 19
@@ -1286,7 +1287,7 @@ def patch(p):
     destroy = guid.to_bytes(8, "little")
     block = p.add_data(BLOCK_SIZE, b"AZSGHST3")
     state = p.add_data(STATE_SIZE)
-    consts = p.add_data(64, struct.pack("<16f", MIN_INTERVAL, TIMEOUT, 1000.0, 60.0, 400.0, LETHAL,
+    consts = p.add_data(64, struct.pack("<16f", MIN_INTERVAL, TIMEOUT, 1000.0, MOVE_MIN_MS, 400.0, LETHAL,
                                         ATTACK_INTERVAL, MAX_WINDOW, RADIUS, MAX_DPS, DEFEAT_DELAY, MAP_RADIUS,
                                         NOTE_EVERY, BOSS_EPS, 1.0, 1e-6))
     spells = p.add_data(8 * 12, b"".join(struct.pack("<II", *CLASS_SPELLS.get(c, DEFAULT_SPELL))

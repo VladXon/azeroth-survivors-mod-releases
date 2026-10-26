@@ -16,6 +16,7 @@ import math
 import os
 import re
 import shutil
+import socket
 import struct
 import subprocess
 import threading
@@ -24,11 +25,14 @@ import tkinter as tk
 import urllib.error
 import urllib.request
 import webbrowser
+from urllib.parse import urlsplit
 from collections import deque
 from pathlib import Path
 
 import save
 from choice_shield import choice_owner
+import lan_udp
+import native_netcore
 
 HERE = Path(__file__).resolve().parent
 GAME_EXE = os.environ.get("AZS_GAME_EXE") or "AzerothSurvivors-52.exe"  # override: test copies of the exe
@@ -46,7 +50,8 @@ GHOST_CONNECT_GRACE_S = 15  # allow the partner to launch/join before probing a 
 FRAME_MAX = 8000  # bytes; the relay (server/) refuses frames over 8192 (relay 3; 4096 before)
 GHOST_STALE_S = 3  # the ghost hides when the partner sent nothing for this long
 PLAYOUT_S = 0.2  # the partner is shown at most this far behind its newest frame (the jitter buffer's ceiling)
-PLAYOUT_MIN_S = 0.03  # ...and at least this far: on a LAN at 60 Hz two sample intervals and the jitter are less
+PLAYOUT_MIN_S = 0.025
+TICK_POLL_S = 0.002  # cheap publication-header poll; no table/feed serialization until a new game tick
 EXTRAPOLATE_S = 0.15  # a late frame: the partner walks on along its last velocity this long, then stops
 PING_EVERY_S = 2.0  # a WebSocket ping to the relay (the server or a LAN hub) for the connection's round trip
 OFFSET_CREEP = 0.002  # s per partner sample (~20 ms a second): how fast the jitter buffer follows a slower network
@@ -349,6 +354,7 @@ class Ghost:
         self.base = None
         self.seq = None
         self.version = None
+        self.generation = 0
 
     def write(self, ally, control=0, lang=0, grants=(0, 0), clock=(0.0, 0, 0.0), bosses=None):
         """ally = the partner (keys below, missing ones are defaults) to show, or None to hide;
@@ -484,6 +490,7 @@ class Ghost:
             self.close()
             return False
         self.seq = struct.unpack_from("<I", head, 8)[0] & ~1
+        self.generation += 1
         return True
 
     def close(self):
@@ -577,6 +584,34 @@ class SharedBlock:
     def __init__(self, ghost, rva):
         self.ghost, self.rva = ghost, rva
         self.seq = 0
+        self.published_tick = None
+        self.watcher = None
+        self.watcher_key = None
+
+    def tick(self):
+        """Stable (publication sequence, run clock), without reading the enemies table."""
+        if not self.ghost.handle:
+            self.close()
+            return None
+        if isinstance(self.ghost, Ghost) and native_netcore.available():
+            key = (self.ghost.handle, self.ghost.base, self.ghost.generation)
+            if key != self.watcher_key:
+                self.close()
+                self.watcher = native_netcore.TickWatcher(key[0], key[1] + self.rva + 8)
+                self.watcher_key = key
+            return self.watcher.latest()
+        raw = self._read(8, 12)
+        if raw is None:
+            return None
+        seq, _, clock = struct.unpack("<IIf", raw)
+        if seq & 1 or not math.isfinite(clock) or self._read(8, 4) != raw[:4]:
+            return None
+        return seq, clock
+
+    def close(self):
+        if self.watcher is not None:
+            self.watcher.close()
+        self.watcher = self.watcher_key = None
 
     def read(self):
         """(run clock, my hero (x, y, z), entries) the exe published last, or None."""
@@ -588,6 +623,7 @@ class SharedBlock:
                 return None
             seq, count, clock, hx, hy, hz = struct.unpack_from("<IIffff", raw, 8)
             if seq % 2 == 0 and self._read(8, 4) == raw[8:12]:
+                self.published_tick = (seq, clock)
                 entries = [self.ENTRY.unpack_from(raw, self.MINE + i * self.ENTRY.size) for i in range(min(count, self.MAX))]
                 return clock, (hx, hy, hz), entries
         return None
@@ -1092,12 +1128,12 @@ def socket_stale(now, connected_at, partner_at):
 
 
 class GhostLink:
-    """Co-op relay thread: sends our hero up to 20 times a second over the match's WebSocket (and our looks
-    every few seconds) and writes the partner into the game's ghost block. Reconnects on any error."""
+    """Co-op companion: send stable native game ticks, receive independently, and write the partner
+    into the ghost block on receipt and local ticks. Old exes retain timed sending."""
     STATIC_EVERY_S = 5
 
     def __init__(self, match_id, token, ghost=None, feed=None, hits=None, host=True, shared=None, hz=GHOST_HZ,
-                 relay=3):
+                 relay=3, lan=False):
         """hits: my exe's hits block reader, None when the exe or the server (match `relay` < 2) can't
         take part in the full sync: then only the old 512-byte frames go out. host: I invited, so my
         run clock leads and my partner's run starts with mine. shared: the shared enemies (a SharedSync,
@@ -1123,6 +1159,20 @@ class GhostLink:
         self.ws = None
         self.connected_at = 0.0
         self.last_sent_at = None
+        self.tick_sent = None
+        self.tick_gap = (0.0 if self.hz > GHOST_HZ else 1 / 25) if bursts else GHOST_FRAME_GAP_S
+        self.lock = threading.RLock()
+        self.receiver = None
+        self.receive_error = None
+        self.lan = bool(lan)
+        self.udp_channel = self.udp_sock = None
+        self.udp_token = ""
+        self.udp_active = self.udp_failed = False
+        self.udp_started = self.udp_received = self.udp_sent = self.udp_hello = 0.0
+        self.run_nonce, self.run_epoch = os.urandom(8).hex(), 0
+        self.peer_run = None
+        self.old_runs = deque(maxlen=8)
+        self.pending_run_events = []
         self.reconnect_at = 0.0
         self.reconnect_failures = 0
         self.partner = None  # latest position frame from the partner
@@ -1176,55 +1226,238 @@ class GhostLink:
         # steady ticks: Windows waits in 15.6 ms steps by default (a 30 Hz loop stepped 31-47 ms); games ask for 1 ms
         timer = ctypes.windll.winmm.timeBeginPeriod(1) == 0
         next_at = time.monotonic()
+        observed = None
         while not self.stop.is_set():
-            game = None
-            try:
-                game = self.feed.read() if self.feed else None
-                if not self.offline:
-                    self.step(game)
-                    self.status = "" if self.ghost else "Без призрака: пересобери игру через ярлык MODDED"
-                else:
-                    self.status = ""  # the session is over: no relay is expected any more
-                self.update_choice()
-            except Exception as e:
-                status = f"Связь с напарником: {link_error(e)}"
-                if status != self.status:
-                    log.warning("relay %s: %s", self.match_id, status)
-                self.status = status
-                self.drop(reconnect=True)
-            self.update_defeat(game)
-            self.lang = game_lang(game, self.lang)
-            if self.ghost:
-                visible = self.partner_visible()
-                if visible != self.visible:
-                    self.visible = visible
-                    log.info("relay %s: partner %s (phase %s, %.1f s since a frame)", self.match_id,
-                             "shown" if visible else "hidden", (self.partner or {}).get("phase"),
-                             time.monotonic() - self.partner_at)
-                self.ghost.write(self.ally() if visible else None, self.control(), self.lang, self.grants,
-                                 (*self.adjust, self.partner_end), self.bosses)
-                # a full ring takes some: the rest wait for the next step (the exe plays 16 a tick)
-                if not visible:
-                    self.timeline.clear()
-                self.due_events()
-                self.events = self.events[self.ghost.push_events(self.events):] if visible else []
-                if self.shared:
-                    self.shared.write_exe(time.monotonic(), self.partner, self.partner_live())
-            else:
-                self.events = []
-                self.timeline.clear()
+            with self.lock:
+                block = getattr(self.shared, "block", None)
+                tick = block.tick() if block else None
+                now = time.monotonic()
+                if self.udp_channel is not None:
+                    self.udp_maintenance(now)
+                fresh = tick is not None and tick != observed
+                # If a native block exists but is temporarily unreadable, retain a slow maintenance
+                # cycle for connection/process discovery. Never send the same native publication twice.
+                if fresh or now >= next_at:
+                    game = None
+                    try:
+                        if self.receive_error is not None:
+                            error, self.receive_error = self.receive_error, None
+                            raise error
+                        game = self.feed.read() if self.feed else None
+                        if not self.offline:
+                            self.step(game, tick)
+                            self.status = "" if self.ghost else "Без призрака: пересобери игру через ярлык MODDED"
+                        else:
+                            self.status = ""
+                        self.update_defeat(game)
+                        self.lang = game_lang(game, self.lang)
+                    except Exception as e:
+                        status = f"Связь с напарником: {link_error(e)}"
+                        if status != self.status:
+                            log.warning("relay %s: %s", self.match_id, status)
+                        self.status = status
+                        self.drop(reconnect=True)
+                    self.present()
+                    observed = tick
+                    next_at = now + 1 / self.hz
             if self.offline and not self.defeat:
-                break  # session over and nothing left to finish
-            next_at = max(next_at + 1 / self.hz, time.monotonic())
-            self.stop.wait(next_at - time.monotonic())
+                break
+            self.stop.wait(TICK_POLL_S if block else max(0, next_at - time.monotonic()))
         log.info("relay %s: stop", self.match_id)
         if timer:
             ctypes.windll.winmm.timeEndPeriod(1)
-        self.drop()
-        if self.ghost and self.ghost.handle:  # hide our last write; never open the game just for that
-            self.ghost.write(None)
+        with self.lock:
+            self.drop()
+            if getattr(getattr(self.shared, "block", None), "close", None):
+                self.shared.block.close()
+            if self.ghost and self.ghost.handle:
+                self.ghost.write(None)
+            if self.ghost:
+                self.ghost.close()
+
+    def present(self):
+        """Serialize game-memory writes with incoming state and the local tick thread."""
+        self.update_choice()
+        self.sync_clock()
         if self.ghost:
-            self.ghost.close()
+            visible = self.partner_visible()
+            if visible != self.visible:
+                self.visible = visible
+                log.info("relay %s: partner %s (phase %s, %.1f s since a frame)", self.match_id,
+                         "shown" if visible else "hidden", (self.partner or {}).get("phase"),
+                         time.monotonic() - self.partner_at)
+            self.ghost.write(self.ally() if visible else None, self.control(), self.lang, self.grants,
+                             (*self.adjust, self.partner_end), self.bosses)
+            # a full ring takes some: the rest wait for the next step (the exe plays 16 a tick)
+            if not visible:
+                self.timeline.clear()
+            self.due_events()
+            self.events = self.events[self.ghost.push_events(self.events):] if visible else []
+            if self.shared:
+                self.shared.write_exe(time.monotonic(), self.partner, self.partner_live())
+        else:
+            self.events = []
+            self.timeline.clear()
+
+    def receive(self, ws):
+        """A single reader owns recv_data, including pongs; a retired reader cannot touch a new link."""
+        import websocket
+        try:
+            while not self.stop.is_set():
+                try:
+                    opcode, data = ws.recv_data(control_frame=True)
+                except websocket.WebSocketTimeoutException:
+                    continue
+                with self.lock:
+                    if self.ws is not ws or self.stop.is_set():
+                        return
+                    if opcode == websocket.ABNF.OPCODE_CLOSE:
+                        raise ConnectionError("соединение закрыто")
+                    if opcode == websocket.ABNF.OPCODE_PONG:
+                        if len(data) == 8:
+                            self.pings.append((time.monotonic() - struct.unpack("<d", data)[0]) * 1000)
+                            self.ping_ms = min(self.pings)
+                    elif opcode in (websocket.ABNF.OPCODE_TEXT, websocket.ABNF.OPCODE_BINARY):
+                        message = json.loads(data)
+                        if not isinstance(message, dict):
+                            continue
+                        if message.get("kind") == "static":
+                            self.partner_static = message
+                        elif message.get("kind") == "udp_offer":
+                            self.offer_udp(message)
+                        elif message.get("kind") == "udp_packet" and self.udp_channel is not None:
+                            self.take_packet(message["packet"])
+                        elif message.get("kind") == "shared":
+                            markers, clean_ef = unpack_choice_ef(message.get("ef"))
+                            if self.shared:
+                                self.shared.incoming({**message, "ef": clean_ef} if markers else message,
+                                                     time.monotonic())
+                            if markers and self.choice_capable:
+                                self.choice_negotiated = True
+                                self.choice_peer.observe(time.monotonic(), markers)
+                        else:
+                            self.take_frame(message)
+                        self.present()
+        except Exception as e:
+            with self.lock:
+                if self.ws is ws and not self.stop.is_set():
+                    self.receive_error = e
+
+    def tick_due(self, tick, now):
+        return tick != self.tick_sent and relay_send_due(now, self.last_sent_at, self.tick_gap)
+
+    def open_udp_socket(self, address):
+        if native_netcore.available():
+            return native_netcore.UdpSocket(address)
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.connect(address)
+        sock.settimeout(0.1)
+        return sock
+
+    def offer_udp(self, offer):
+        if not self.lan or self.udp_channel is not None:
+            return
+        port, token = offer.get("port"), offer.get("token")
+        if type(port) is not int or not 1 <= port <= 65535 or not isinstance(token, str) or not re.fullmatch(r"[0-9a-f]{32}", token):
+            return
+        self.udp_channel = lan_udp.make_channel()
+        self.udp_token = token
+        self.udp_started = time.monotonic()
+        try:
+            self.udp_sock = self.open_udp_socket((urlsplit(SERVER).hostname, port))
+            threading.Thread(target=self.receive_udp, args=(self.udp_sock,), daemon=True).start()
+        except OSError:
+            self.udp_failed = True
+
+    def receive_udp(self, sock):
+        while not self.stop.is_set():
+            try:
+                raw = sock.recv(lan_udp.MAX_DATAGRAM + 1)
+                with self.lock:
+                    if self.udp_sock is not sock or self.udp_failed:
+                        return
+                    if hasattr(self.udp_channel, 'feed_bytes'):
+                        result = self.udp_channel.feed_bytes(raw, self.udp_token)
+                    else:
+                        packet = lan_udp.decode(raw)
+                        if packet.get("token") != self.udp_token:
+                            continue
+                        if packet.get("hello") is True:
+                            result = {"hello": True}
+                        else:
+                            frame, messages = self.udp_channel.receive(packet)
+                            result = {"frame": frame, "messages": messages}
+                    self.udp_received = time.monotonic()
+                    self.udp_active = True  # a valid data packet also proves the UDP path works
+                    if result.get("hello") is True:
+                        self.udp_active = True
+                    else:
+                        if result['frame'] is not None:
+                            self.take_frame(result['frame'])
+                        self.take_reliable(result['messages'])
+                        self.present()
+            except socket.timeout:
+                continue
+            except ValueError:
+                continue
+            except OSError:
+                return
+
+    def take_packet(self, packet):
+        frame, messages = self.udp_channel.receive(packet)
+        if frame is not None:
+            self.take_frame(frame)
+        self.take_reliable(messages)
+
+    def take_reliable(self, messages):
+        """Reliable hits retain their original run-clock time even when a later packet carries them."""
+        for message in messages:
+            if not isinstance(message, dict) or not isinstance(message.get("ev"), list):
+                continue
+            run = message.get("run")
+            if run is not None and run != self.peer_run:
+                if run not in self.old_runs:
+                    if len(self.pending_run_events) >= 4096:
+                        raise ValueError('Too many hits waiting for their run snapshot')
+                    self.pending_run_events.append(message)
+                continue
+            st = message.get("st")
+            if isinstance(st, (int, float)) and self.trail:
+                self.timeline.append((st, [message["ev"]]))
+            else:
+                self.events.append(message["ev"])
+
+    def send_packet(self, frame=None, messages=None):
+        if hasattr(self.udp_channel, 'packet_bytes'):
+            raw = self.udp_channel.packet_bytes(frame, self.udp_token, messages)
+        else:
+            self.udp_channel.queue(messages or [])
+            raw = lan_udp.encode(self.udp_channel.packet(frame, self.udp_token))
+        def fallback():
+            self.ws.send('{"type":"udp_packet","fallback":' + ('true' if self.udp_failed else 'false')
+                         + ',"packet":' + raw.decode('utf-8') + '}')
+        if self.udp_active and not self.udp_failed:
+            try:
+                self.udp_sock.send(raw)
+            except OSError:
+                self.udp_failed, self.udp_active = True, False
+                fallback()
+        else:
+            fallback()
+        self.udp_sent = time.monotonic()
+
+    def udp_maintenance(self, now):
+        if not self.udp_failed:
+            if now - (self.udp_received or self.udp_started) >= 2:
+                self.udp_failed, self.udp_active = True, False
+            elif self.udp_sock and now - self.udp_hello >= (0.5 if self.udp_active else 0.1):
+                self.udp_hello = now
+                try:
+                    self.udp_sock.send(lan_udp.encode({"hello": True, "token": self.udp_token}))
+                except OSError:
+                    self.udp_failed, self.udp_active = True, False
+        if self.ws is not None and self.udp_channel.pending and now - self.udp_sent >= 0.020:
+            self.send_packet()
 
     def control(self):
         """The control word: shared defeat, and with a run sync exe no pauses, the guest's start held
@@ -1292,7 +1525,7 @@ class GhostLink:
             else:
                 self.defeat = True
 
-    def step(self, game):
+    def step(self, game, tick=None):
         import websocket  # websocket-client; only co-op needs it
         now = time.monotonic()
         if self.ws is not None and socket_stale(now, self.connected_at, self.partner_at):
@@ -1302,11 +1535,21 @@ class GhostLink:
             if now < self.reconnect_at:
                 return
             url = SERVER.rstrip("/").replace("http", "ws", 1) + f"/api/matches/{self.match_id}/ws"
-            self.ws = websocket.create_connection(url, timeout=1, header=[f"Authorization: Bearer {self.token}", f"User-Agent: {USER_AGENT}"])
-            self.ws.settimeout(0.002)  # the drain waits this long each step: more held a 60 Hz loop at ~47
+            self.ws = websocket.create_connection(url, timeout=1, header=[f"Authorization: Bearer {self.token}", f"User-Agent: {USER_AGENT}"]
+                                                  + (["X-Azeroth-UDP: 1"] if self.lan else []))
+            self.ws.settimeout(0.25)
             self.connected_at = time.monotonic()
             self.last_sent_at = None
             self.static_sent = None  # a new socket: the partner may have missed our looks
+            self.receiver = threading.Thread(target=self.receive, args=(self.ws,), daemon=True)
+            self.receiver.start()
+        if now - self.ping_at >= PING_EVERY_S:
+            self.ping_at = now
+            self.ws.ping(struct.pack("<d", now))
+        if getattr(self.shared, "block", None) is not None and tick is None:
+            return
+        if tick is not None and not self.tick_due(tick, now):
+            return
         run = (game or {}).get("AZSRUN", (0, {}))[1]
         nopause = bool(self.ghost and self.ghost.sync)
         frame = local_hero(game, self.meter.update(run, nopause) if run else 0.0, nopause)
@@ -1324,63 +1567,70 @@ class GhostLink:
             frame["t"] = round(clock[0], 3)
         mine = self.hits.read() if self.hits and game else None
         if mine:  # a v3 exe: the real hits instead of the partner's dps estimate
-            self.unsent_ev = (self.unsent_ev + mine[0])[-UNSENT_EV_MAX:]
-            frame["ev"], frame["rw"] = cap_events(self.unsent_ev), mine[1]
+            self.unsent_ev.extend(mine[0])
+            frame["ev"], frame["rw"] = self.unsent_ev[:64], mine[1]
             if mine[2] is not None:
                 frame["bh"] = [list(b) for b in mine[2]]
         if self.shared:
             table = self.shared.outgoing(time.monotonic())
             self.tick_hero(frame)
+            if tick is not None:
+                tick = self.shared.block.published_tick
+                if tick is None or not self.tick_due(tick, time.monotonic()):
+                    return
             if time.monotonic() - self.table_at >= SHARED_EVERY_S:
                 frame.update(table)
                 self.table_at = time.monotonic()
         self.attach_choice_frame(frame)
+        if self.udp_channel is not None:
+            frame['run'] = f'{self.run_nonce}:{self.run_epoch}'
         text = json.dumps(frame, separators=(",", ":"))
         while len(text) > FRAME_MAX and frame.get("ev"):  # the relay closes the socket on bigger frames
-            frame["ev"] = cap_events(frame["ev"], len(frame["ev"]) // 2)
+            frame["ev"] = frame["ev"][:len(frame["ev"]) // 2]
             text = json.dumps(frame, separators=(",", ":"))
         now = time.monotonic()
-        if relay_send_due(now, self.last_sent_at, self.send_gap):
-            self.ws.send(text)
-            self.last_sent_at = now
-            self.unsent_ev = []
-            self.send_static()
-        if now - self.ping_at >= PING_EVERY_S:
-            self.ping_at = now
-            self.ws.ping(struct.pack("<d", now))
-        while True:  # drain everything the partner sent since the last step
-            try:
-                opcode, data = self.ws.recv_data(control_frame=True)
-            except websocket.WebSocketTimeoutException:
-                break
-            if opcode == websocket.ABNF.OPCODE_PONG:
-                if len(data) == 8:
-                    self.pings.append((time.monotonic() - struct.unpack("<d", data)[0]) * 1000)
-                    self.ping_ms = min(self.pings)
-                continue
-            if opcode not in (websocket.ABNF.OPCODE_TEXT, websocket.ABNF.OPCODE_BINARY):
-                continue
-            message = json.loads(data)
-            if message.get("kind") == "static":
-                self.partner_static = message
+        if (self.tick_due(tick, now) if tick is not None else relay_send_due(now, self.last_sent_at, self.send_gap)):
+            if self.udp_channel is not None:
+                if "en" in frame or "ef" in frame:
+                    self.ws.send(json.dumps({**frame, "type": "udp_shared", "ev": []}, separators=(",", ":")))
+                self.send_packet({**{k: v for k, v in frame.items() if k not in ("en", "ef", "ev")},
+                                  **({"ev": []} if "ev" in frame else {})},
+                                 [{"st": frame.get("st", 0), "run": frame['run'], "ev": event}
+                                  for event in frame.get("ev", [])])
             else:
-                self.take_frame(message)
-        self.sync_clock()
+                self.ws.send(text)
+            self.last_sent_at = now
+            self.tick_sent = tick
+            del self.unsent_ev[:len(frame.get("ev", []))]
+            self.send_static()
 
     def tick_hero(self, frame):
         """My hero from the exe's own tick (the shared enemies block: run clock and hero position, every game
         tick) instead of the AZSRUN text the game sends its UI less often: each frame then carries a fresh
-        position, stamped with when that tick was first seen."""
+        position, stamped with that tick's run clock."""
         mine = self.shared.mine
         if not mine or frame.get("phase") not in IN_RUN or not all(map(math.isfinite, mine[1])):
             return
+        if self.tick_clock is not None and mine[0] < self.tick_clock - 1:
+            self.run_epoch += 1
         if mine[0] != self.tick_clock:
             self.tick_clock, self.tick_seen = mine[0], time.monotonic()
         frame["x"], frame["y"], frame["z"] = (round(v, 3) for v in mine[1])
-        frame["st"] = round(max(self.tick_seen, self.run_seen), 3)
+        frame["st"] = frame["t"] = mine[0]
 
     def take_frame(self, message):
         """A position frame from the partner."""
+        run = message.get('run')
+        if isinstance(run, str) and run != self.peer_run:
+            if run in self.old_runs:
+                return
+            if self.peer_run is not None:
+                self.old_runs.append(self.peer_run)
+            self.peer_run = run
+            self.trail.clear()
+            self.timeline.clear()
+            self.events.clear()
+            self.offset = None
         markers, clean_ef = unpack_choice_ef(message.get("ef"))
         if markers:
             if self.choice_capable:
@@ -1412,13 +1662,15 @@ class GhostLink:
             if isinstance(st, (int, float)) and self.trail:
                 self.timeline.append((st, message["ev"]))
             else:
-                self.events = (self.events + message["ev"])[-Ghost.EV_RING:]
+                self.events.extend(message["ev"])
             granted, self.partner_picks = new_picks(self.partner_picks, message.get("rw"))
             if self.bosses is not None and self.ghost and self.ghost.boss:
                 granted[1] = 0  # both exes share the guardians' health: each kill rewards on both screens
             if self.shared and self.shared.on:
                 granted[0] = 0  # shared enemies: each elite dies and drops its chest on both screens
             self.grants = [g + n for g, n in zip(self.grants, granted)]
+        pending, self.pending_run_events = self.pending_run_events, []
+        self.take_reliable(pending)
 
     def send_static(self):
         """Our looks and gear from the save the game runs on, on change and every few seconds.
@@ -1485,6 +1737,8 @@ class GhostLink:
         if self.trail and key < self.trail[-1][0] - 1:
             self.trail.clear()  # the partner's clock went back (another PC or companion): start over
             self.offset = None
+            self.timeline.clear()
+            self.events.clear()
         if self.trail and key <= self.trail[-1][0]:
             self.trail[-1] = (self.trail[-1][0], self.trail[-1][1], message)
             return
@@ -1502,7 +1756,7 @@ class GhostLink:
             return
         t = time.monotonic() - (self.offset or 0.0) - self.playout_delay()
         while self.timeline and (self.timeline[0][0] <= t or len(self.timeline) > 64):
-            self.events = (self.events + self.timeline.popleft()[1])[-Ghost.EV_RING:]
+            self.events.extend(self.timeline.popleft()[1])
 
     def one_way_s(self):
         """The partner's frames' trip to me (s): half of both round trips to the relay; the partner's, when its
@@ -1520,14 +1774,15 @@ class GhostLink:
         now = time.monotonic()
         fresh = sum(1 for at in self.arrivals if now - at <= 2)
         return {"ping": None if self.ping_ms is None else round(self.ping_ms), "fps": round(fresh / 2),
+                "transport": "UDP" if self.udp_active and not self.udp_failed else "WebSocket",
+                "engine": getattr(self.udp_channel, "backend", None),
                 "jitter": round(self.jitter * 1000) if self.trail else None,
                 "delay": round(self.playout_delay() * 1000) if self.trail else None}
 
     def playout_delay(self):
-        """How far behind its newest sample the partner is shown: two sample intervals (one lost or late
-        frame still finds a next one to slide to) and three times the mean lateness, within
-        PLAYOUT_MIN_S..PLAYOUT_S. On a LAN about 0.07 s, over the internet up to 0.2 s."""
-        return min(PLAYOUT_S, max(PLAYOUT_MIN_S, 2 * self.interval + 3 * self.jitter))
+        """1.5 observed sample intervals plus three times mean lateness, bounded to 25..200 ms.
+        Jittered 25 ms synthetic ticks on localhost settle near 38 ms; WAN jitter increases it."""
+        return min(PLAYOUT_S, max(PLAYOUT_MIN_S, 1.5 * self.interval + 3 * self.jitter))
 
     def playout(self):
         """The partner PLAYOUT_S behind its newest sample, the position interpolated between samples on
@@ -1568,12 +1823,25 @@ class GhostLink:
         return time.monotonic() - self.dead_since < DEAD_SHOW_S
 
     def drop(self, reconnect=False):
-        if self.ws is not None:
+        if self.udp_sock is not None:
+            self.udp_sock.close()
+        self.udp_sock = self.udp_channel = None
+        self.udp_active = self.udp_failed = False
+        self.udp_started = self.udp_received = self.udp_sent = self.udp_hello = 0.0
+        ws, self.ws = self.ws, None
+        if ws is not None:
             try:
-                self.ws.close()
+                # abort wakes a blocked recv without waiting for a close handshake under our state lock
+                ws.abort()
+                ws.sock.close()
             except Exception:
                 pass
         self.ws = None
+        self.receive_error = None
+        self.tick_sent = None
+        self.peer_run = None
+        self.old_runs.clear()
+        self.pending_run_events.clear()
         # A failed socket is definitive evidence that peer-driven effects must stop now;
         # preserve capability negotiation so the next connection need not renegotiate.
         self.partner = None
@@ -1602,11 +1870,12 @@ class GhostLink:
     def close(self):
         self.stop.set()
         # Clear companion-owned inputs only through an already-open game handle.
-        if self.choice_capable and self.ghost and getattr(self.ghost, "handle", None) is not None:
-            try:
-                self.ghost.write_choice(False, 0, 0, 0.0)
-            except Exception:
-                pass
+        with self.lock:
+            if self.choice_capable and self.ghost and getattr(self.ghost, "handle", None) is not None:
+                try:
+                    self.ghost.write_choice(False, 0, 0, 0.0)
+                except Exception:
+                    pass
 
 
 def press_escape_in_game():
@@ -1936,7 +2205,7 @@ class Session:
             ghost = self.new_ghost()
             shared = self.new_shared(ghost, host) if hits and match.get("relay", 1) >= 3 else None
             self.link = GhostLink(match["id"], self.token(), ghost, feed, hits, host, shared,
-                                  match.get("hz", GHOST_HZ), match.get("relay", 1)).start()
+                                  match.get("hz", GHOST_HZ), match.get("relay", 1), match.get("lan", False)).start()
         elif not coop and self.link:
             if self.link.partner_dead and not self.link.defeat_done and not self.link.defeat_manual:
                 # the session is over but our run must still end in defeat: let the link finish that

@@ -1,8 +1,8 @@
 {
   "format": 1,
-  "version": "2026.10.25.4-de99f4f",
-  "tag": "v2026.10.25.4-de99f4f",
-  "source_commit": "de99f4f3ed4e6126f597c8eab0134fcc8605c7e5",
+  "version": "2026.10.26.1-08ac9bd",
+  "tag": "v2026.10.26.1-08ac9bd",
+  "source_commit": "08ac9bd4e26b56764795424b312a478dd407367f",
   "server_migrations": [
     "https://azeroth-pvp.ync-erver.workers.dev"
   ],
@@ -15,8 +15,8 @@
   },
   "launcher": {
     "asset": "Azeroth.Launcher.exe",
-    "size": 25651378,
-    "sha256": "1d139ece7300a0a5e84dcade1c02f380ba4b65e380d30d0515f325edf9153003"
+    "size": 25874389,
+    "sha256": "2742eefdc241ad2ab2fd1c1b6e907162b6cfdb8c4a86925cac584bac54940f7c"
   },
   "mod": {
     "files": [
@@ -42,13 +42,23 @@
       },
       {
         "path": "docs/DEVELOPMENT.md",
-        "size": 19968,
-        "sha256": "519a8ab3fc287a961158fbfba5c1fe2195b4cf51aba369a2966da4fe6b049d76"
+        "size": 24777,
+        "sha256": "2faf8c1dea6760aa58c54dc44215fa32356bdbe14c1ae425506b7856fd0b43cc"
+      },
+      {
+        "path": "docs/netcode-research-2026-10-26.md",
+        "size": 16132,
+        "sha256": "06bd01e8eb7a9e1c5dfe422c27e5ecafc48b0254d509eb502a8954693635c364"
       },
       {
         "path": "lan_server.py",
-        "size": 34260,
-        "sha256": "eaf8c37181e39511d6dc7c4478e6be81cf9d810221a411a27c56b6b8397bdf44"
+        "size": 41477,
+        "sha256": "70674490f2643db9d40aa016e2e227efe04e201c4a30b445b9998fd52102261b"
+      },
+      {
+        "path": "lan_udp.py",
+        "size": 6669,
+        "sha256": "99b5e831580e51bec9488e6023f77ec0dfc06cea8d9f7d52fe157cfc6b0d6831"
       },
       {
         "path": "lang/en.json",
@@ -64,6 +74,61 @@
         "path": "launcher.pyw",
         "size": 5489,
         "sha256": "8cafef847d785574da72ada502af344992fff2a6ec05cea592ef5fea565ffe06"
+      },
+      {
+        "path": "native/game_bridge.cpp",
+        "size": 4126,
+        "sha256": "b53c65004f35176f8261ada724332fd6affa000af037a292c1a351f68a463d11"
+      },
+      {
+        "path": "native/netcore.cpp",
+        "size": 20112,
+        "sha256": "caef5f91effee8ca47f6175063a85d4141be80c25810c93c71a7a4d4e2b2ba63"
+      },
+      {
+        "path": "native/netcore.dll",
+        "size": 563712,
+        "sha256": "7fd5612dedf3f4e7f880868cb672a4d1fc0af5ec1e8d2f129a8216d7756e10f7"
+      },
+      {
+        "path": "native/README.md",
+        "size": 3026,
+        "sha256": "5d0a7b82fdb8b17d11753f2f3996e6155fe42b0e93bbab14c3842eca5cea7f99"
+      },
+      {
+        "path": "native/vendor/json.hpp",
+        "size": 953436,
+        "sha256": "aaf127c04cb31c406e5b04a63f1ae89369fccde6d8fa7cdda1ed4f32dfc5de63"
+      },
+      {
+        "path": "native/vendor/json.LICENSE.txt",
+        "size": 1075,
+        "sha256": "c0d068392ea65358b798b8c165103560f06e9e3b38c4ab4e2d8810a7b931af86"
+      },
+      {
+        "path": "native/vendor/licenses/libcxx.txt",
+        "size": 16703,
+        "sha256": "539dd7aed86e8a4f12cbdd0e6c50c189c7d74847e4fecc64ce2c6ee3a01da38b"
+      },
+      {
+        "path": "native/vendor/licenses/libcxxabi.txt",
+        "size": 16706,
+        "sha256": "e2b35be49f7284a45b7baca8fc7b3ab7440e7902392b2528a457816b5bb2a15c"
+      },
+      {
+        "path": "native/vendor/licenses/libunwind.txt",
+        "size": 16706,
+        "sha256": "b5efebcaca80879234098e52d1725e6d9eb8fb96a19fce625d39184b705f7b6d"
+      },
+      {
+        "path": "native/vendor/licenses/mingw.txt",
+        "size": 2325,
+        "sha256": "8cf9580e38caf10bef699107591f9790b1642fc999f55d8f6a1602132b48a751"
+      },
+      {
+        "path": "native_netcore.py",
+        "size": 8402,
+        "sha256": "4ebefa8663163ff582f5cf2f10b2b2381a716872631dce211e07a65aa2d650de"
       },
       {
         "path": "offsets.py",
@@ -92,8 +157,8 @@
       },
       {
         "path": "patches/coop_ghost.py",
-        "size": 124476,
-        "sha256": "0d7bfca5177b783990b00f86c371f7ea95de0f8e528c65f7b088bd3b1992a0ea"
+        "size": 124569,
+        "sha256": "4bca6f501548435d631238625b03dddd72da840ea6df93c2b083de8bef6fa4e6"
       },
       {
         "path": "patches/coop_shared.py",
@@ -152,8 +217,8 @@
       },
       {
         "path": "pvp.py",
-        "size": 141372,
-        "sha256": "ad96a1620f45369327c04500faadb6bd999dbc836fd4f1a8e622e1054eccf4e7"
+        "size": 153827,
+        "sha256": "12c8b1de71859140e8c124c196a7d629c4ba2346c331ebffefcb98fe1d639786"
       },
       {
         "path": "pvp_server.txt",
@@ -162,13 +227,13 @@
       },
       {
         "path": "README.md",
-        "size": 27153,
-        "sha256": "c5229aad8065f4a5f049fda7c42ba4d72c22b4762fd1cdcbc66935fccfa41b1e"
+        "size": 29326,
+        "sha256": "3be8790c51277a7a6ddfdd1c571d405df64c7811d050fcd5a6ba27533aa1e8e9"
       },
       {
         "path": "RELEASE.json",
         "size": 676,
-        "sha256": "031cef302e90df3ca79a5c57e7911f085dbd0d593fa5a2982b7f9e62d0667291"
+        "sha256": "ad9bb7e73069929cddd26ec526283b28bf741b0487f1919eb8a9e8a4d2f11525"
       },
       {
         "path": "requirements.txt",
@@ -183,7 +248,7 @@
       {
         "path": "VERSION",
         "size": 20,
-        "sha256": "6a6a3be8397e97a17c5537854040b3b69c15d2cd5706740eaacab81d8630820b"
+        "sha256": "8018d0c3a4f735449dbf8d249d980280a029a5649561264097b242eb0a5b779a"
       }
     ]
   }

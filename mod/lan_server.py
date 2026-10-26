@@ -25,9 +25,12 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
+import lan_udp
+import native_netcore
 
 PORT = 47630
 DISCOVERY_PORT = 47631
+UDP_PORT = 47632
 HZ = 60  # co-op relay rate the companions use on this hub, a CS-like tick (the internet server: 20)
 MAX_PARTY = 2  # co-op players per match: the game shows one partner so far
 ZONES = ["elwynn", "duskwood", "wsg", "ungoro", "ab", "feralas", "arena", "sm", "av", "brm", "aq", "naxx"]
@@ -173,6 +176,10 @@ class Conn:
         self.sock, self.key, self.nick, self.match_id = sock, key, nick, match_id
         self.out = queue.Queue(maxsize=64)
         self.closed = False
+        self.udp_channel = None
+        self.udp_token = None
+        self.udp_address = None
+        self.udp_seen = self.udp_sent = 0.0
         threading.Thread(target=self.writer, daemon=True).start()
 
     def send(self, data, op=1):
@@ -220,6 +227,8 @@ class Hub:
         self.players = {}  # key (the lowercased nick) -> {key, nick, token (its SHA-256), rating, zones, seen}
         self.matches = {}
         self.conns = {}  # match id -> [Conn]
+        self.udp_sock = None
+        self.udp_sessions = {}
         try:
             self.players = {k: {**p, "key": k} for k, p in json.loads(path.read_text(encoding="utf-8")).items()} if path else {}
         except (OSError, ValueError, AttributeError):
@@ -560,6 +569,94 @@ class Hub:
             conns = self.conns.get(conn.match_id, [])
             if conn in conns:
                 conns.remove(conn)
+            self.udp_sessions.pop(conn.udp_token, None)
+
+    def offer_udp(self, conn):
+        with self.lock:
+            if self.udp_sock is None:
+                return
+            conn.udp_channel = lan_udp.make_channel()
+            conn.udp_token = secrets.token_hex(16)
+            self.udp_sessions[conn.udp_token] = conn
+            conn.send(json.dumps({"kind": "udp_offer", "token": conn.udp_token,
+                                  "port": self.udp_sock.getsockname()[1]}))
+
+    def send_packet(self, conn, frame=None, messages=None):
+        if hasattr(conn.udp_channel, 'packet_bytes'):
+            raw = conn.udp_channel.packet_bytes(frame, conn.udp_token, messages)
+        else:
+            conn.udp_channel.queue(messages or [])
+            raw = lan_udp.encode(conn.udp_channel.packet(frame, conn.udp_token))
+        now = time.monotonic()
+        if conn.udp_address and now - conn.udp_seen < 2:
+            self.udp_sock.sendto(raw, conn.udp_address)
+        else:
+            conn.udp_address = None
+            conn.send('{"kind":"udp_packet","packet":' + raw.decode('utf-8') + '}')
+        conn.udp_sent = now
+
+    def udp_message(self, conn, packet, raw=None):
+        if raw is not None and hasattr(conn.udp_channel, 'feed_bytes'):
+            result = conn.udp_channel.feed_bytes(raw, conn.udp_token)
+            frame, messages = result['frame'], result['messages']
+        else:
+            frame, messages = conn.udp_channel.receive(packet)
+        clean = relay_frame(frame, conn.nick) if frame else None
+        if clean is not None and isinstance(frame.get('run'), str) and len(frame['run']) <= 48:
+            clean['run'] = frame['run']
+        events = []
+        for message in messages:
+            if not isinstance(message, dict) or not isinstance(message.get("ev"), list):
+                continue
+            event = relay_frame({"ev": [message["ev"]]}, conn.nick)["ev"][0]
+            events.append({"st": max(0, clamp(message.get("st"), 1e9)), "ev": event,
+                           **({'run': message['run']} if isinstance(message.get('run'), str) and len(message['run']) <= 48 else {})})
+        if clean or events:
+            self.touch(conn, clean or {})
+        if conn.closed:
+            return
+        if clean or events:
+            self.forward(conn, clean, events)
+        if packet.get("f") is not None or packet.get("e"):
+            self.send_packet(conn)  # packet ACKs; ACK-only packets never cause an ACK loop
+
+    def udp_receive(self, raw, address):
+        try:
+            packet = lan_udp.decode(raw)
+            with self.lock:
+                conn = self.udp_sessions.get(packet.get("token"))
+                if conn is None or conn.closed:
+                    return
+                if packet.get("hello") is True:
+                    conn.udp_address, conn.udp_seen = address, time.monotonic()
+                    self.udp_sock.sendto(lan_udp.encode({"hello": True, "token": conn.udp_token}), address)
+                elif conn.udp_address == address:
+                    conn.udp_seen = time.monotonic()
+                    self.udp_message(conn, packet, raw)
+        except (ValueError, TypeError, KeyError, OSError):
+            return
+
+    def touch(self, conn, hero):
+        now = now_ms()
+        m = self.matches.get(conn.match_id)
+        s = next((s for s in m["p"] if s["key"] == conn.key), None) if m else None
+        if s and m["state"] in ("starting", "running"):
+            if s["status"] == "waiting" and str(hero.get("phase")) in IN_RUN:
+                s.update(status="running", startedAt=now, lastSeen=now)
+                self.tick(m, now)
+            if s["status"] in ("running", "paused"):
+                s["lastSeen"] = now
+
+    def forward(self, conn, frame, events):
+        for other in self.conns.get(conn.match_id, []):
+            if other.key == conn.key or other.closed:
+                continue
+            if other.udp_channel is not None:
+                self.send_packet(other, frame, events)
+            elif frame or events:
+                out = {**(frame or {"kind": "pos", "nick": conn.nick}),
+                       **({"ev": [event["ev"] for event in events]} if events or frame and "ev" in frame else {})}
+                other.send(json.dumps(out, separators=(",", ":")))
 
     def hang_up(self, match_id, key=None):
         for conn in list(self.conns.get(match_id, [])):
@@ -574,6 +671,23 @@ class Hub:
         if not isinstance(hero, dict):
             return
         with self.lock:
+            if hero.get("type") == "udp_packet" and conn.udp_channel is not None:
+                if hero.get("fallback") is True:
+                    conn.udp_address = None
+                try:
+                    self.udp_message(conn, hero["packet"])
+                except (ValueError, TypeError, KeyError, OSError):
+                    conn.close(1008, "invalid reliable packet")
+                return
+            if hero.get("type") == "udp_shared" and conn.udp_channel is not None:
+                clean = relay_frame({**hero, "ev": []}, conn.nick)
+                for other in self.conns.get(conn.match_id, []):
+                    if other.key != conn.key:
+                        out = ({"kind": "shared", "nick": conn.nick,
+                                **{k: clean[k] for k in ("en", "ef") if k in clean}}
+                               if other.udp_channel else clean)
+                        other.send(json.dumps(out, separators=(",", ":")))
+                return
             if hero.get("type") != "static":
                 now = now_ms()
                 m = self.matches.get(conn.match_id)
@@ -587,10 +701,14 @@ class Hub:
                         s["lastSeen"] = now  # a paused game sends no progress, but its hero streams
                 if conn.closed:
                     return
-            out = json.dumps(relay_frame(hero, conn.nick), separators=(",", ":"))
-            for other in self.conns.get(conn.match_id, []):
-                if other.key != conn.key:
-                    other.send(out)
+            clean = relay_frame(hero, conn.nick)
+            if hero.get("type") == "static":
+                for other in self.conns.get(conn.match_id, []):
+                    if other.key != conn.key:
+                        other.send(json.dumps(clean))
+            else:
+                events = [{"st": clean.get("st", 0), "ev": event} for event in clean.get("ev", [])]
+                self.forward(conn, {**clean, **({"ev": []} if "ev" in clean else {})}, events)
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -658,6 +776,8 @@ class Handler(BaseHTTPRequestHandler):
         sock.settimeout(SOCKET_IDLE_S)
         conn = Conn(sock, me["key"], me["nick"], match_id)
         hub.join(conn)
+        if self.headers.get("X-Azeroth-UDP") == "1":
+            hub.offer_udp(conn)
         try:
             while not conn.closed and (message := ws_read(self.rfile)):
                 op, data = message
@@ -742,11 +862,39 @@ class Server(ThreadingHTTPServer):
     allow_reuse_address = False  # a second hub on the same port must fail, not share it
 
 
-def start(port=PORT, path=HUB_FILE, host="0.0.0.0", **hub_options):
+def start(port=PORT, path=HUB_FILE, host="0.0.0.0", udp_port=None, **hub_options):
     """Runs a hub on background threads; returns the server (.hub, .shutdown_all())."""
     server = Server((host, port), Handler)
     server.hub = Hub(path, **hub_options)
     stop = threading.Event()
+    try:
+        address = (host, (UDP_PORT if port == PORT else 0) if udp_port is None else udp_port)
+        if native_netcore.available():
+            udp = native_netcore.UdpListener(address)
+        else:
+            udp = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            udp.bind(address)
+        udp.settimeout(0.01)
+        server.hub.udp_sock = udp
+    except OSError:
+        if 'udp' in locals() and udp is not None:
+            udp.close()
+        udp = None  # occupied/blocked UDP never prevents reliable WebSocket play
+
+    def udp_loop():
+        while not stop.is_set():
+            try:
+                raw, address = udp.recvfrom(lan_udp.MAX_DATAGRAM + 1)
+                server.hub.udp_receive(raw, address)
+            except OSError:
+                pass
+            with server.hub.lock:
+                for conn in list(server.hub.udp_sessions.values()):
+                    if not conn.closed and conn.udp_channel.pending and time.monotonic() - conn.udp_sent > 0.020:
+                        try:
+                            server.hub.send_packet(conn)
+                        except (OSError, ValueError):
+                            conn.udp_address = None
 
     def ticker():
         while not stop.wait(1):
@@ -754,6 +902,8 @@ def start(port=PORT, path=HUB_FILE, host="0.0.0.0", **hub_options):
 
     def shutdown_all():
         stop.set()
+        if udp is not None:
+            udp.close()
         server.shutdown()
         server.server_close()
         with server.hub.lock:
@@ -761,6 +911,8 @@ def start(port=PORT, path=HUB_FILE, host="0.0.0.0", **hub_options):
                 server.hub.hang_up(match_id)
 
     server.shutdown_all = shutdown_all
+    if udp is not None:
+        threading.Thread(target=udp_loop, daemon=True).start()
     for target, args in ((server.serve_forever, ()), (ticker, ()), (answer_discovery, (stop, server.server_address[1]))):
         threading.Thread(target=target, args=args, daemon=True).start()
     return server
